@@ -53,6 +53,8 @@ Why D-Bus: it is the standard IPC bus on the Linux desktop (GNOME, systemd and N
   - Fallback: our own minimal protocol-6 client (the protocol is binary but documented, and we need only ~6 packet types).
 - All devices are driven in **Direct** mode (per-frame control). Vendor hardware does not persist Direct colors, so the daemon re-applies lighting at every login.
 - **`set_mode` resets state.** On the ASUS Aura USB controller, calling `set_mode('direct')` re-initializes the controller and turns all LEDs black — even if it is already in Direct mode (verified 2026-10-28). Rule: call `set_mode` once at start, after a reconnect and after resume — and **always send a full frame right after it**. Partial updates are allowed only when the engine knows the hardware state.
+- **Device and zone identity.** Names are not a stable contract: they differ between OpenRGB versions and drivers (OpenRGB 1.1 reports the board as `ASUS PRIME B660-PLUS D4` with zones `Addressable RGB Header 1..3`, no "Aura" in either). The config identifies a device by its OpenRGB **location/serial** where available, falls back to name + zone index, and verifies the expected LED count on start. If anything does not match, the daemon asks the user to re-pick the zone instead of guessing. Never hard-code names like "Aura …".
+- **Single writer.** Only one process may stream frames to OpenRGB. The daemon is that writer by design; the GUI previews through the daemon, never directly.
 - **Smoke test (2026-10-28):** OpenRGB 1.1 + `openrgb-python` 0.3.8 negotiate protocol 4; reading devices, `resize`, Direct mode and per-LED writes all work. The stale-state bug did not appear in this sequence.
 - **Indexing:** the OpenRGB GUI numbers LEDs from 1, the SDK from 0. All files in this project store **0-based SDK indices**.
 - **Security:** the SDK server has no authentication, so it must listen on `127.0.0.1` only.
@@ -106,6 +108,8 @@ Effects can work in three systems:
 - Fixed timestep, ~30 FPS; **per-device FPS cap** (I²C devices such as GPUs are slow).
 - Send only frames that changed.
 - **Gamma correction**, **per-device color balance** and a global **brightness limit** — the main difference between "works" and "looks good".
+- **Measured cost (stopgap, 2026-10-28):** a pure-Python effect loop at 30 FPS for 51 LEDs uses < 0.1% of one core and 15 MB RAM; the OpenRGB server ~0.3% and 32 MB. At this scale numpy is optional — keep the engine simple and add vectorization only if a profile shows a need.
+- **Effect parameters** start as a flat key/value set (proven handy for tuning in the stopgap) and map directly to profile JSON.
 
 ## 9. Component library and support levels
 
@@ -119,7 +123,9 @@ Effects can work in three systems:
 ## 10. Deployment
 
 - Development happens in **toolbox/distrobox**; the host system stays read-only.
-- Runtime: a Python venv in `~/.local/share/…` using the host `python3`. Later: Flatpak for the GUI.
+- Runtime: a Python venv in `~/.local/share/airglow/venv` using the host `python3`. Later: Flatpak for the GUI.
+- **Risk: host Python upgrades.** On an image-based system the host Python version changes with an image update (e.g. 3.14 → 3.15), which breaks an existing venv silently. The daemon's start script checks that the venv still runs and prints a clear "recreate the venv" message; long-term, Flatpak packaging removes the problem.
+- Startup race "OpenRGB is not ready yet": `Restart=on-failure` in the unit covers it, but the daemon also retries the connection itself with backoff.
 - systemd **user** units: `openrgb.service` and the daemon (`Requires=` + `After=`), with reconnect logic in the daemon.
 - **Sleep/resume:** the daemon listens to logind's `PrepareForSleep`, turns lights off before sleep and asks OpenRGB to rescan after resume (USB devices are often re-enumerated).
 - User services start at **login** (the intended behavior). `loginctl enable-linger` is optional for lighting on the login screen.
@@ -184,6 +190,10 @@ Fans (Nuvoton NCT6798, driver nct6775 — not autoloaded,
 
 Consequences: identical fans behind a parallel hub always show the same pattern; panel point symmetry makes effects that are symmetric under 180° rotation (outward pulse, rotation, breathing, twinkle) look correct from any viewpoint.
 
+### Stopgap lighting (2026-10-28)
+
+Until `airglowd` exists, the reference machine runs temporary effects: `airglow-stars.sh` (starry sky) and `airglow-cats.sh` (falling cats), each a bash wrapper with an embedded Python loop, started by systemd user units (`openrgb.service`, `airglow-stars.service`, `airglow-cats.service` with `Conflicts=`) and switched by `airglow-fx stars | cats | status`. They validated in practice: headless OpenRGB as a user service, full frame after `set_mode`, reconnect after sleep and on connection loss, gamma 2.2, sending only changed frames, the panel and ring mappings above. The real daemon replaces them; their effect loops are the seed of the effects engine (§8).
+
 ## 13. Prior art & positioning
 
 | Project | What it is | What we take from it |
@@ -212,6 +222,9 @@ Consequences: identical fans behind a parallel hub always show the same pattern;
 | 7 | Components as JSON with support levels | New hardware without code changes |
 | 8 | PySide6 for the GUI | Custom canvas (photo + points + preview) is easier in Qt |
 | 9 | Fan control as a separate root service with `ExecStopPost=` failsafe | Least privilege; safe on crash |
+| 10 | Identify devices by location/serial, verify LED counts, never by hard-coded names | Names changed between OpenRGB versions (stopgap lesson) |
+| 11 | Daemon is the single writer to OpenRGB | Two writers fight; `Conflicts=` in the stopgap proved the point |
+| 12 | Pure Python first, numpy only if profiling demands it | Measured < 0.1% CPU at 30 FPS for 51 LEDs |
 
 ## 15. Open questions
 
