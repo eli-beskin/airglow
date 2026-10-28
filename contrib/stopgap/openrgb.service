@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenRGB SDK server (localhost only)
+
+[Service]
+ExecStart=/usr/bin/flatpak run org.openrgb.OpenRGB --server --server-host 127.0.0.1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

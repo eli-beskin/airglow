@@ -1,0 +1,14 @@
+[Unit]
+Description=Airglow stopgap: falling cats
+Requires=openrgb.service
+After=openrgb.service
+Conflicts=airglow-stars.service
+
+[Service]
+Environment=COLOR=0,255,94
+ExecStart=%h/.local/bin/airglow-cats.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

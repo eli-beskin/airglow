@@ -1,0 +1,13 @@
+[Unit]
+Description=Airglow stopgap: starry sky lighting
+Requires=openrgb.service
+After=openrgb.service
+
+[Service]
+Environment=DARK=0.15
+ExecStart=%h/.local/bin/airglow-stars.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
