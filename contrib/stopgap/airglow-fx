@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# airglow-fx — switch the lighting effect: airglow-fx stars | cats | status
+# airglow-fx — switch the lighting effect: airglow-fx stars | cats | eq | status
 set -euo pipefail
-EFFECTS=(stars cats)
+EFFECTS=(stars cats eq)
 
 case "${1:-status}" in
-    stars|cats)
+    stars|cats|eq)
         for fx in "${EFFECTS[@]}"; do
             [[ "$fx" == "$1" ]] || systemctl --user disable --now "airglow-$fx.service" 2>/dev/null || true
         done
@@ -19,7 +19,7 @@ case "${1:-status}" in
         done
         ;;
     *)
-        echo "Usage: airglow-fx stars | cats | status" >&2
+        echo "Usage: airglow-fx stars | cats | eq | status" >&2
         exit 1
         ;;
 esac

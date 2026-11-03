@@ -1,0 +1,13 @@
+[Unit]
+Description=Airglow stopgap: music equalizer
+Requires=openrgb.service
+After=openrgb.service pipewire.service pipewire-pulse.service
+Conflicts=airglow-stars.service airglow-cats.service
+
+[Service]
+ExecStart=%h/.local/bin/airglow-eq.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

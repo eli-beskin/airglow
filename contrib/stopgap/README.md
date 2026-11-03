@@ -12,12 +12,14 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 |---|---|---|
 | `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect |
-| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| status` |
+| `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinner, cooler level |
+| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| status` |
 | `openrgb.service` | `~/.config/systemd/user/` | OpenRGB SDK server, localhost only |
 | `airglow-stars.service` | `~/.config/systemd/user/` | Stars effect, `DARK=0.15` |
 | `airglow-cats.service` | `~/.config/systemd/user/` | Cats effect, green `COLOR=0,255,94`, `Conflicts=airglow-stars.service` |
+| `airglow-eq.service` | `~/.config/systemd/user/` | Equalizer effect, `Conflicts=` with stars and cats |
 
-Runtime: a Python venv in `~/.local/share/airglow/venv` with `openrgb-python==0.3.8` (same path as architecture §10).
+Runtime: a Python venv in `~/.local/share/airglow/venv` with `openrgb-python==0.3.8` and `numpy` (same path as architecture §10). `numpy` is needed only by the equalizer (FFT).
 
 ## Install
 
@@ -25,12 +27,12 @@ Requires OpenRGB 1.x from Flathub (`org.openrgb.OpenRGB`). Run from this folder:
 
 ```bash
 python3 -m venv ~/.local/share/airglow/venv
-~/.local/share/airglow/venv/bin/pip install openrgb-python==0.3.8
+~/.local/share/airglow/venv/bin/pip install openrgb-python==0.3.8 numpy
 
 mkdir -p ~/.local/bin ~/.config/systemd/user
-cp airglow-stars.sh airglow-cats.sh airglow-fx ~/.local/bin/
-chmod +x ~/.local/bin/airglow-{stars.sh,cats.sh,fx}
-cp openrgb.service airglow-stars.service airglow-cats.service ~/.config/systemd/user/
+cp airglow-stars.sh airglow-cats.sh airglow-eq.sh airglow-fx ~/.local/bin/
+chmod +x ~/.local/bin/airglow-{stars.sh,cats.sh,eq.sh,fx}
+cp openrgb.service airglow-stars.service airglow-cats.service airglow-eq.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now openrgb.service
 airglow-fx stars
@@ -71,11 +73,22 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - `--preview` draws the panel in the terminal without OpenRGB.
 - On exit: `ON_EXIT=off`.
 
+### Equalizer (`airglow-eq.sh`)
+
+- **Audio input:** the monitor of the default output through PipeWire (what you hear: Spotify, browser, games), no microphone. Uses `parec` if present, otherwise `pw-record` with `stream.capture.sink=true`. Mono s16le, 48 kHz.
+- **Analysis:** 2048-sample Hann-windowed FFT (numpy) → three bands `40–250 / 250–2000 / 2000–12000 Hz`; per-band auto-gain (`DYN=30` dB range, reference falls `AGC_FALL=4` dB/s), silence gate `GATE=-62` dBFS; bass beat detector (level jump over a slow average, 0.25 s cooldown).
+- **Fan panels:** three bars, left→right as seen on the viewer-facing panel: bass (outer), mid, treble (next to the propeller). Low part tinted per bar (emerald / green / lime), then a shared green → yellow → red meter gradient; white peak dots hold `PEAK_HOLD=0.45` s and fall. Fast attack, `RELEASE=16` rows/s.
+- **Petals:** a two-armed comet spinner; speed grows with loudness, gets a kick on every beat, flashes and moves to the next palette color (cyan → violet → magenta → blue). Because idx 0–7 are shared with the top of the treble bar, `PETALS=blend` (default) lets the comet head override the bar there; `PETALS=spinner` and `PETALS=eq` give the shared LEDs to one side only.
+- **Cooler ring:** `COOLER=level` fills the ring from the bottom by overall loudness in the meter colors; `COOLER=pulse` pulses it with the bass in the spinner color.
+- `--preview` draws panel, petals and cooler in the terminal (truecolor) from live audio; `SOURCE=demo` uses a built-in 124 BPM test beat, so no audio and no OpenRGB are needed.
+- Light-to-sound latency is about 50–60 ms (capture buffer + analysis window).
+- On exit: `ON_EXIT=off`.
+
 ### Known hardware effects
 
 - The 4 hub fans are wired in parallel → identical pattern on all of them.
-- The right panel is the same board rotated 180° → cats crawl up, upside down, there.
-- idx 0–7 also light the blade "petals".
+- The right panel is the same board rotated 180° → cats crawl up, upside down, there; equalizer bars grow from the top down, like a reflection.
+- idx 0–7 also light the blade "petals" — the equalizer has to share them between the treble bar and the spinner.
 
 ## Measured load
 
