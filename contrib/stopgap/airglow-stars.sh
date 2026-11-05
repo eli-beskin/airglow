@@ -25,6 +25,7 @@ set -euo pipefail
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"             # gamma correction for smooth fades
 : "${ON_EXIT:=static}"        # static = solid COLOR, off = black, keep = freeze last frame
+: "${OFF_FLAG:=${XDG_RUNTIME_DIR:-/tmp}/airglow/off-requested}"  # exists while `airglow-fx off` runs → stop to black
 
 # Reference hardware (architecture.md §12), 0-based SDK indices
 : "${DEVICE_MATCH:=B660}"                     # substring of the motherboard device name
@@ -64,7 +65,7 @@ fi
 
 export COLOR BASE PEAK DENSITY DARK DARK_DRIFT DARK_FADE STAR_MIN STAR_MAX FPS GAMMA ON_EXIT \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
-       OPENRGB_HOST OPENRGB_PORT
+       OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_LIST="${1:-}"
 
 exec "$PY" - <<'PYEOF'
@@ -216,6 +217,9 @@ while running:
         continue
     next_t += DT
     time.sleep(max(0.0, next_t - time.monotonic()))
+
+if os.path.exists(E["OFF_FLAG"]):    # `airglow-fx off`: stop to black whatever ON_EXIT says
+    ON_EXIT = "off"
 
 try:
     if ON_EXIT in ("static", "off"):

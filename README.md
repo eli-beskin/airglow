@@ -40,6 +40,7 @@ Design decisions and their reasons: [docs/architecture.md](docs/architecture.md)
 - [x] Architecture
 - [x] OpenRGB SDK smoke test (OpenRGB 1.1, headless server)
 - [x] Stopgap effects as systemd user services ([contrib/stopgap](contrib/stopgap/))
+- [x] GNOME Quick Settings toggle for the stopgap effects ([contrib/gnome-extension](contrib/gnome-extension/))
 - [ ] Backend adapter and LED probe tool
 - [ ] Calibration and LED map
 - [ ] Effects engine (~30 FPS)

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- a glowing fan ring: hub, ring, four rays, four sparks -->
+  <g fill="#2e3436">
+    <circle cx="8" cy="8" r="1.5"/>
+    <path d="M8 3.5a4.5 4.5 0 1 0 0 9a4.5 4.5 0 1 0 0-9zm0 1.5a3 3 0 1 1 0 6a3 3 0 1 1 0-6z"/>
+    <rect x="7.25" y="0" width="1.5" height="2.5" rx="0.75"/>
+    <rect x="7.25" y="13.5" width="1.5" height="2.5" rx="0.75"/>
+    <rect x="0" y="7.25" width="2.5" height="1.5" rx="0.75"/>
+    <rect x="13.5" y="7.25" width="2.5" height="1.5" rx="0.75"/>
+    <circle cx="3.4" cy="3.4" r="0.9"/>
+    <circle cx="12.6" cy="3.4" r="0.9"/>
+    <circle cx="3.4" cy="12.6" r="0.9"/>
+    <circle cx="12.6" cy="12.6" r="0.9"/>
+  </g>
+</svg>

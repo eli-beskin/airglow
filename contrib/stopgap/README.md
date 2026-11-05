@@ -13,7 +13,7 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 | `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect |
 | `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinner, cooler level |
-| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| status` |
+| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
 | `openrgb.service` | `~/.config/systemd/user/` | OpenRGB SDK server, localhost only |
 | `airglow-stars.service` | `~/.config/systemd/user/` | Stars effect, `DARK=0.15` |
 | `airglow-cats.service` | `~/.config/systemd/user/` | Cats effect, green `COLOR=0,255,94`, `Conflicts=airglow-stars.service` |
@@ -37,6 +37,19 @@ systemctl --user daemon-reload
 systemctl --user enable --now openrgb.service
 airglow-fx stars
 ```
+
+Switching:
+
+```bash
+airglow-fx cats      # switch to an effect; it stays after the next login
+airglow-fx off       # lighting off, LEDs black; stays off after the next login
+airglow-fx on        # back to the last used effect (stars the first time)
+airglow-fx current   # prints the running effect, or "off"
+```
+
+`off` paints the LEDs black even for stars (whose `ON_EXIT=static` would otherwise leave a solid color): while it runs, `airglow-fx` creates `$XDG_RUNTIME_DIR/airglow/off-requested`, and every effect checks that file when it stops. The last effect is remembered in `~/.local/state/airglow/last-effect`.
+
+For a switch in GNOME's Quick Settings menu, see [../gnome-extension](../gnome-extension/).
 
 After an image update that changes the host Python version, recreate the venv (first two lines).
 

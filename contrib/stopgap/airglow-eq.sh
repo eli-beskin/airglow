@@ -51,6 +51,7 @@ set -euo pipefail
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"
 : "${ON_EXIT:=off}"           # off = black, keep = freeze last frame
+: "${OFF_FLAG:=${XDG_RUNTIME_DIR:-/tmp}/airglow/off-requested}"  # exists while `airglow-fx off` runs → stop to black
 : "${PW_LATENCY:=20ms}"       # pw-record node latency (only used when parec is missing)
 
 # Reference hardware (architecture.md §12), 0-based SDK indices
@@ -95,7 +96,7 @@ export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SM
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
        SPIN_BASE SPIN_GAIN KICK COOLER BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
-       OPENRGB_HOST OPENRGB_PORT
+       OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_MODE="$MODE"
 
 exec "$PY" - <<'PYEOF'
@@ -540,6 +541,9 @@ while running:
     time.sleep(max(0.0, next_t - time.monotonic()))
 
 src.close()
+if os.path.exists(E["OFF_FLAG"]):    # `airglow-fx off`: stop to black whatever ON_EXIT says
+    ON_EXIT = "off"
+
 try:
     if ON_EXIT == "off":
         dev.set_colors([OFF for z in dev.zones for _ in z.leds], fast=True)
