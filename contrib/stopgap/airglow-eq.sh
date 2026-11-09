@@ -6,7 +6,7 @@
 #   • fan dot panels: 3 equalizer bars (bass | mid | treble), green → yellow → red, peak dots
 #   • blade petals:   a two-armed spinner that speeds up with the music and kicks on beats,
 #                     changing color on every beat
-#   • cooler ring:    a "liquid level" of the overall loudness
+#   • cooler ring:    the same spinner as the petals, scaled to the ring and in step with them
 # The GPU is never touched.
 #
 # Usage:
@@ -16,7 +16,7 @@
 #   ./airglow-eq.sh --list                  show OpenRGB devices and zones, then exit
 #
 # Settings can be overridden from the environment, e.g.:
-#   SPIN_GAIN=2 COOLER=pulse ./airglow-eq.sh
+#   SPIN_GAIN=2 COOLER=level ./airglow-eq.sh
 
 set -euo pipefail
 
@@ -46,7 +46,10 @@ set -euo pipefail
 : "${SPIN_BASE:=0.25}"        # rev/s when quiet
 : "${SPIN_GAIN:=1.2}"         # extra rev/s at full loudness
 : "${KICK:=1.5}"              # extra rev/s on a beat (decays)
-: "${COOLER:=level}"          # level = loudness fills the ring | pulse = ring pulses with the bass | off
+: "${COOLER:=spin}"           # spin = spinner like the petals | level = loudness fills the ring
+                              # | pulse = ring pulses with the bass | off
+: "${COOLER_ARMS:=2}"         # spin: arms on the ring
+: "${COOLER_DIR:=1}"          # spin: 1 = clockwise (same index direction as the petals), -1 = reverse
 : "${BRIGHT:=1.0}"            # global brightness 0..1
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"
@@ -94,7 +97,7 @@ fi
 
 export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
-       SPIN_BASE SPIN_GAIN KICK COOLER BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
+       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_MODE="$MODE"
@@ -131,6 +134,8 @@ PETALS_MODE, BLEND = E["PETALS"], float(E["BLEND"])
 ARMS, TAIL = max(1, int(E["ARMS"])), max(0.5, float(E["TAIL"]))
 SPIN_BASE, SPIN_GAIN, KICK = float(E["SPIN_BASE"]), float(E["SPIN_GAIN"]), float(E["KICK"])
 COOLER_MODE = E["COOLER"]
+COOLER_ARMS = max(1, int(E["COOLER_ARMS"]))
+COOLER_DIR = -1 if E["COOLER_DIR"].strip() == "-1" else 1
 BRIGHT, FPS, GAMMA = float(E["BRIGHT"]), float(E["FPS"]), float(E["GAMMA"])
 ON_EXIT = E["ON_EXIT"]
 DT = 1.0 / FPS
@@ -329,14 +334,22 @@ class Spinner:
     def color(self):
         return lerp(PALETTE[self.pal - 1], PALETTE[self.pal], self.mix)
 
-    def petal(self, k):
-        """(color, intensity) of petal k: comet heads with fading tails, idx 0 = 12 o'clock."""
-        span = PETALS / ARMS
-        d = (self.pos - k) % span                          # how far petal k is behind a head
-        comet = (1 - d / TAIL) ** 1.6 if d < TAIL else 0.0
-        comet = max(comet, d - (span - 1))                 # fade in the petal just ahead
+    def ring(self, k, n, arms, offset=0.0, direction=1):
+        """(color, intensity) of LED k on an n-LED ring: comet heads with fading tails.
+        Every ring turns at the same rev/s as the petals, so the comet's head points the
+        same way on all of them; offset (in LEDs) says where 12 o'clock is on this ring."""
+        span = n / arms
+        tail = TAIL * n / PETALS                           # TAIL is in petals: same share of a turn
+        head = self.pos / PETALS * n * direction + offset  # head position in LEDs
+        d = ((head - k) * direction) % span                # how far LED k is behind a head
+        comet = (1 - d / tail) ** 1.6 if d < tail else 0.0
+        comet = max(comet, d - (span - 1))                 # fade in the LED just ahead
         inten = comet * (0.35 + 0.65 * self.loud) + 0.5 * self.flash
         return self.color(), min(1.0, inten)
+
+    def petal(self, k):
+        """Petal k, idx 0 = 12 o'clock."""
+        return self.ring(k, PETALS, ARMS)
 
 
 def panel_index(row, col_from_left):
@@ -376,7 +389,10 @@ def cooler_pixels(n, lv, loud, sp):
     for k in range(n):
         y = math.sin(math.radians(k * 360 / n))           # idx 0 = 3 o'clock, clockwise, +y = down
         hh = (1 - y) / 2                                   # 0 = bottom of the ring, 1 = top
-        if COOLER_MODE == "level":
+        if COOLER_MODE == "spin":
+            # idx 0 = 3 o'clock, clockwise, so 12 o'clock is 3/4 of the way round
+            out.append(sp.ring(k, n, COOLER_ARMS, offset=0.75 * n, direction=COOLER_DIR))
+        elif COOLER_MODE == "level":
             fill = min(1.0, max(0.0, (loud * 1.15 - hh) / 0.15))
             out.append((eq_color(1, hh), fill))
         elif COOLER_MODE == "pulse":

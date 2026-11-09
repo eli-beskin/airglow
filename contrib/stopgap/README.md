@@ -12,7 +12,7 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 |---|---|---|
 | `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect |
-| `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinner, cooler level |
+| `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler |
 | `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
 | `openrgb.service` | `~/.config/systemd/user/` | OpenRGB SDK server, localhost only |
 | `airglow-stars.service` | `~/.config/systemd/user/` | Stars effect, `DARK=0.15` |
@@ -92,7 +92,7 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - **Analysis:** 2048-sample Hann-windowed FFT (numpy) → three bands `40–250 / 250–2000 / 2000–12000 Hz`; per-band auto-gain (`DYN=30` dB range, reference falls `AGC_FALL=4` dB/s), silence gate `GATE=-62` dBFS; bass beat detector (level jump over a slow average, 0.25 s cooldown).
 - **Fan panels:** three bars, left→right as seen on the viewer-facing panel: bass (outer), mid, treble (next to the propeller). Low part tinted per bar (emerald / green / lime), then a shared green → yellow → red meter gradient; white peak dots hold `PEAK_HOLD=0.45` s and fall. Fast attack, `RELEASE=16` rows/s.
 - **Petals:** a two-armed comet spinner; speed grows with loudness, gets a kick on every beat, flashes and moves to the next palette color (cyan → violet → magenta → blue). Because idx 0–7 are shared with the top of the treble bar, `PETALS=blend` (default) lets the comet head override the bar there; `PETALS=spinner` and `PETALS=eq` give the shared LEDs to one side only.
-- **Cooler ring:** `COOLER=level` fills the ring from the bottom by overall loudness in the meter colors; `COOLER=pulse` pulses it with the bass in the spinner color.
+- **Cooler ring:** `COOLER=spin` (default) runs the petals' spinner on the ring: same speed, beat kicks and colors, tail scaled to the 12 LEDs, heads pointing the same way as on the petals. `COOLER_ARMS=2` sets the number of comets, `COOLER_DIR=-1` reverses the direction. `COOLER=level` fills the ring from the bottom by overall loudness in the meter colors; `COOLER=pulse` pulses it with the bass in the spinner color.
 - `--preview` draws panel, petals and cooler in the terminal (truecolor) from live audio; `SOURCE=demo` uses a built-in 124 BPM test beat, so no audio and no OpenRGB are needed.
 - Light-to-sound latency is about 50–60 ms (capture buffer + analysis window).
 - On exit: `ON_EXIT=off`.
