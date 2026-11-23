@@ -2,7 +2,8 @@
 //
 // What it does
 //   • the tile turns the lighting on (last used effect) or off;
-//   • the arrow opens a menu: Stars / Cats / Equalizer / Turn off.
+//   • the arrow opens a menu: Stars / Cats / Equalizer / Colors… / Turn off;
+//   • "Colors…" opens the settings window (prefs.js): fan and GPU colors, GPU blinking.
 //
 // How it works
 //   • Switching runs ~/.local/bin/airglow-fx (contrib/stopgap), so the logic lives
@@ -40,6 +41,7 @@ const STRINGS = {
         eq: 'Equalizer',
         off: 'Off',
         turnOff: 'Turn off',
+        settings: 'Colors and blinking…',
         starting: 'starting…',
         restarting: 'restarting — is OpenRGB running?',
         failed: 'Error',
@@ -53,6 +55,7 @@ const STRINGS = {
         eq: 'Эквалайзер',
         off: 'Выкл',
         turnOff: 'Выключить',
+        settings: 'Цвета и мигание…',
         starting: 'запуск…',
         restarting: 'перезапуск — OpenRGB запущен?',
         failed: 'Ошибка',
@@ -75,6 +78,7 @@ class AirglowToggle extends QuickMenuToggle {
             menuButtonAccessibleName: T.title,
         });
 
+        this._extension = extension;
         this._path = extension.path;
         this._cancellable = new Gio.Cancellable();
         this._destroyed = false;
@@ -94,6 +98,7 @@ class AirglowToggle extends QuickMenuToggle {
             this._items.set(fx, item);
         }
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addAction(T.settings, () => this._openSettings());
         this._offItem = this.menu.addAction(T.turnOff, () => this._run('off'));
 
         // ---- tile click: on <-> off ----
@@ -244,6 +249,17 @@ class AirglowToggle extends QuickMenuToggle {
                 : PopupMenu.Ornament.NONE);
         }
         this._offItem.visible = running !== null;
+    }
+
+    _openSettings() {
+        // openPreferences() is async on recent GNOME Shell versions; it opens the
+        // Extensions app's window for prefs.js.
+        try {
+            const result = this._extension.openPreferences();
+            result?.catch?.(e => console.warn(`Airglow: opening settings: ${e.message}`));
+        } catch (e) {
+            console.warn(`Airglow: opening settings: ${e.message}`);
+        }
     }
 
     // ---------- running airglow-fx ----------

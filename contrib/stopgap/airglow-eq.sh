@@ -7,7 +7,8 @@
 #   • blade petals:   a two-armed spinner that speeds up with the music and kicks on beats,
 #                     changing color on every beat
 #   • cooler ring:    the same spinner as the petals, scaled to the ring and in step with them
-# The GPU is never touched.
+#   • graphics card:  a beat light — flashes on every bass beat in the spinner's color,
+#                     a dim glow with the bass in between
 #
 # Usage:
 #   ./airglow-eq.sh                         run the effect (Ctrl+C to stop)
@@ -23,6 +24,9 @@ set -euo pipefail
 # ---------- settings ----------
 : "${SOURCE:=monitor}"        # monitor = default output (what you hear) | demo = built-in test beat
                               # | anything else = PipeWire target for pw-record (experimental)
+: "${VIEW:=side}"             # side = through the side glass (left fan panels face you)
+                              # | front = through the front panel (right panels face you)  (stopgap.json: "general": "view")
+: "${AIRGLOW_CONFIG:=${XDG_CONFIG_HOME:-$HOME/.config}/airglow/stopgap.json}"
 : "${BANDS:=40-250,250-2000,2000-12000}"   # Hz per bar, left→right as you see the panel
 : "${DYN:=30}"                # dB range of a full bar (smaller = jumpier bars)
 : "${GAIN:=0}"                # dB; raise if bars are too low, lower if they always hit the top
@@ -50,6 +54,8 @@ set -euo pipefail
                               # | pulse = ring pulses with the bass | off
 : "${COOLER_ARMS:=2}"         # spin: arms on the ring
 : "${COOLER_DIR:=1}"          # spin: 1 = clockwise (same index direction as the petals), -1 = reverse
+: "${GPU:=beat}"              # beat = graphics card flashes on beats | off = leave it alone
+: "${GPU_FPS:=12}"            # max GPU updates per second (it sits on a slow I²C bus); beats skip the limit
 : "${BRIGHT:=1.0}"            # global brightness 0..1
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"
@@ -95,15 +101,15 @@ if [[ "$MODE" != "--preview" ]] && ! (exec 3<>"/dev/tcp/$OPENRGB_HOST/$OPENRGB_P
     exit 1
 fi
 
-export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
+export VIEW AIRGLOW_CONFIG SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
-       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
+       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR GPU GPU_FPS BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_MODE="$MODE"
 
 exec "$PY" - <<'PYEOF'
-import math, os, shutil, signal, subprocess, sys, threading, time
+import json, math, os, shutil, signal, subprocess, sys, threading, time
 import numpy as np
 
 E = os.environ
@@ -352,9 +358,67 @@ class Spinner:
         return self.ring(k, PETALS, ARMS)
 
 
+# ---------- live settings: only the view (colors follow the music) ----------
+class LiveConfig:
+    """Re-reads one section of stopgap.json whenever the file changes (checked 4× per second).
+    Keys missing from the file fall back to the environment defaults; a broken file keeps
+    the last good values."""
+
+    def __init__(self, path, section, defaults):
+        self.path, self.section, self.defaults = path, section, defaults
+        self.values, self.sig, self.next_check = dict(defaults), None, 0.0
+
+    def poll(self, now):
+        if now < self.next_check:
+            return False
+        self.next_check = now + 0.25
+        try:
+            st = os.stat(self.path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        if sig == self.sig:
+            return False
+        self.sig = sig
+        data = {}
+        if sig is not None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f).get(self.section) or {}
+                if not isinstance(data, dict):
+                    raise ValueError("section is not an object")
+            except (OSError, ValueError, AttributeError) as e:
+                print(f"Ignoring {self.path}: {e}", file=sys.stderr, flush=True)
+                return False
+        self.values = {k: data.get(k, d) for k, d in self.defaults.items()}
+        return True
+
+
+# Which fan panel faces the viewer (stopgap.json: "general": {"view": "side" | "front"}).
+VIEWS = ("side", "front")
+view_cfg = LiveConfig(os.path.expanduser(E["AIRGLOW_CONFIG"]), "general", {"view": E["VIEW"]})
+VIEW = "side"
+
+
+def apply_view():
+    global VIEW
+    v = view_cfg.values["view"]
+    VIEW = v if v in VIEWS else (E["VIEW"] if E["VIEW"] in VIEWS else "side")
+
+
+view_cfg.poll(0.0)
+apply_view()
+
+
 def panel_index(row, col_from_left):
-    """Viewer-facing LEFT panel: row 0 = top, outer column is leftmost, inner column (idx 0..12)
-    is next to the propeller; idx 0..7 also drive the blade petals."""
+    """(row, column) as the viewer sees the fan panel -> LED index (0-based, SDK).
+    side:  the LEFT panel faces you: row 0 = top, the outer column (2) is leftmost,
+           the inner column (idx 0..12) is next to the propeller.
+    front: the RIGHT panel faces you. It is the same board turned 180°, so idx 0 is at the
+           bottom, in the inner column, which is on your left next to the propeller.
+    idx 0..7 also drive the blade petals."""
+    if VIEW == "front":
+        return col_from_left * ROWS + (ROWS - 1 - row)
     return (COLS - 1 - col_from_left) * ROWS + row
 
 
@@ -402,6 +466,16 @@ def cooler_pixels(n, lv, loud, sp):
     return out
 
 
+GPU_MODE = E["GPU"]
+
+
+def gpu_pixel(lv, sp):
+    """Beat light: a flash in the spinner's color on every beat, a dim bass glow in between."""
+    if GPU_MODE != "beat":
+        return BLACK
+    return (sp.color(), min(1.0, 0.2 + 0.35 * lv[0] + 0.9 * sp.flash))
+
+
 src = make_source()
 an, bars, sp = Analyzer(), Bars(), Spinner()
 state = {"lv": [0.0] * 3, "loud": 0.0}
@@ -431,17 +505,20 @@ if MODE == "--preview":
         last = time.monotonic()
         while True:
             now = time.monotonic()
+            if view_cfg.poll(now):
+                apply_view()
             tick(now, min(0.1, now - last))
             last = now
             hub = hub_pixels(bars, sp)
             cool = cooler_pixels(SIZES[COOL], state["lv"], state["loud"], sp)
             lines = [f"Airglow EQ preview — {src.label}   Ctrl+C to stop", "",
-                     "   left fan panel (as you see it)    bass  mid  treble"]
+                     f"   fan panel as you see it ({VIEW})  bass  mid  treble"]
             for row in range(ROWS):
                 lines.append("   " + " ".join(term(hub[panel_index(row, c)]) for c in range(COLS)) + RESET)
             lines.append("")
             lines.append("   petals 12→ " + " ".join(term(hub[k], "●") for k in range(PETALS)) + RESET)
             lines.append("   cooler  3→ " + " ".join(term(p, "●") for p in cool) + RESET)
+            lines.append("   gpu        " + term(gpu_pixel(state["lv"], sp), "● ● ●") + RESET)
             lines.append("")
             lv = state["lv"]
             lines.append(f"   bass   {meter(lv[0])}")
@@ -461,13 +538,98 @@ if MODE == "--preview":
 
 # ---------- OpenRGB ----------
 from openrgb import OpenRGBClient
-from openrgb.utils import RGBColor, DeviceType
+from openrgb.utils import RGBColor, DeviceType, ModeFlags
+import copy
 
 
 def led(p):
     (r, g, b), k = p
     k = BRIGHT * max(0.0, min(1.0, k)) ** GAMMA          # gamma on intensity only: hue stays put
     return RGBColor(round(r * k), round(g * k), round(b * k))
+
+
+def direct_mode(dev):
+    """The device's Direct mode, ready for set_mode().
+
+    openrgb-python 0.3.8 validates a mode before sending it, and some drivers report a
+    Direct mode whose own speed or brightness is outside its min..max (the Palit RTX 3080
+    does: "Mode validation failed. Required values invalid or not present"). Its
+    force=True path is broken in 0.3.8, so we send a copy with the values pulled into
+    range instead: brightness at its maximum, speed at its minimum."""
+    mode = next((m for m in dev.modes if m.name.lower() == "direct"), None)
+    if mode is None:
+        raise ValueError("no Direct mode")
+    m = copy.copy(mode)
+
+    def fit(value, lo, hi, prefer):
+        if lo is None or hi is None:
+            return value
+        if value is None or not min(lo, hi) <= value <= max(lo, hi):
+            return prefer
+        return value
+
+    if ModeFlags.HAS_SPEED in m.flags:
+        m.speed = fit(m.speed, m.speed_min, m.speed_max, m.speed_min)
+    else:
+        m.speed = m.speed_min = m.speed_max = None
+    if ModeFlags.HAS_BRIGHTNESS in m.flags:
+        top = None if m.brightness_min is None or m.brightness_max is None \
+            else max(m.brightness_min, m.brightness_max)
+        m.brightness = fit(m.brightness, m.brightness_min, m.brightness_max, top)
+    else:
+        m.brightness = m.brightness_min = m.brightness_max = None
+    if ModeFlags.HAS_MODE_SPECIFIC_COLOR in m.flags:
+        colors = list(m.colors or [])
+        lo = m.colors_min or 0
+        hi = m.colors_max if m.colors_max is not None else max(lo, len(colors))
+        m.colors = colors[:hi] + [RGBColor(0, 0, 0)] * max(0, lo - len(colors))
+    else:
+        m.colors = m.colors_min = m.colors_max = None
+    return m
+
+
+class GpuOut:
+    """The graphics card as a separate OpenRGB device: Direct mode, one color for all its
+    LEDs, at most GPU_FPS writes per second and only when the color changed. An urgent
+    write (a beat) skips the rate limit, so no flash is lost."""
+
+    def __init__(self, enabled, fps):
+        self.enabled, self.dt = enabled, 1.0 / max(1.0, fps)
+        self.dev, self.last, self.next_t = None, None, 0.0
+
+    def attach(self, client):
+        self.dev, self.last = None, None
+        if not self.enabled:
+            return
+        gpu = next((d for d in client.devices if d.type == DeviceType.GPU and d.leds), None)
+        if gpu is None:
+            print("No graphics card in OpenRGB; lighting the case only.", file=sys.stderr, flush=True)
+            return
+        try:
+            gpu.set_mode(direct_mode(gpu))
+        except Exception as e:  # noqa: BLE001 — no Direct mode, or the card refused
+            m = next((m for m in gpu.modes if m.name.lower() == "direct"), None)
+            detail = "" if m is None else (
+                f"; Direct mode: flags={int(m.flags)} speed={m.speed} [{m.speed_min}..{m.speed_max}]"
+                f" brightness={m.brightness} [{m.brightness_min}..{m.brightness_max}]"
+                f" colors={len(m.colors or [])} [{m.colors_min}..{m.colors_max}]")
+            print(f"Cannot drive '{gpu.name}' ({e}{detail}); lighting the case only.",
+                  file=sys.stderr, flush=True)
+            return
+        self.dev = gpu
+
+    def push(self, color, now, urgent=False):
+        if self.dev is None or color == self.last or (now < self.next_t and not urgent):
+            return
+        self.dev.set_colors([color] * len(self.dev.leds), fast=True)
+        self.last, self.next_t = color, now + self.dt
+
+    def fill(self, color):
+        if self.dev is not None:
+            self.dev.set_colors([color] * len(self.dev.leds), fast=True)
+
+
+gpu = GpuOut(GPU_MODE == "beat", float(E["GPU_FPS"]))
 
 
 def connect():
@@ -487,6 +649,7 @@ def connect():
     if resized:
         dev.update()
     dev.set_mode("direct")          # resets Aura to black -> full frame must follow at once
+    gpu.attach(client)              # same rule for the GPU: its first color follows at once
     return client, dev
 
 
@@ -527,7 +690,8 @@ def build_frame():
 
 last, last_wall = None, time.time()
 prev = next_t = time.monotonic()
-print(f"Equalizer on '{dev.name}', audio: {src.label}. Ctrl+C to stop.", flush=True)
+where = f"'{dev.name}'" + (f" and '{gpu.dev.name}'" if gpu.dev else "")
+print(f"Equalizer on {where}, audio: {src.label}. Ctrl+C to stop.", flush=True)
 while running:
     try:
         wall = time.time()
@@ -537,12 +701,16 @@ while running:
             last = None
         last_wall = wall
         now = time.monotonic()
+        if view_cfg.poll(now):                # turned to the other side of the case
+            apply_view()
+            print(f"Settings: view {VIEW}", flush=True)
         tick(now, min(0.1, now - prev))
         prev = now
         frame = build_frame()
         if frame != last:
             dev.set_colors(frame, fast=True)
             last = frame
+        gpu.push(led(gpu_pixel(state["lv"], sp)), now, urgent=sp.flash > 0.95)
     except (ConnectionError, OSError, BrokenPipeError) as e:
         print(f"OpenRGB connection lost ({e}); retrying in 3 s…", file=sys.stderr, flush=True)
         time.sleep(3)
@@ -563,6 +731,7 @@ if os.path.exists(E["OFF_FLAG"]):    # `airglow-fx off`: stop to black whatever 
 try:
     if ON_EXIT == "off":
         dev.set_colors([OFF for z in dev.zones for _ in z.leds], fast=True)
+        gpu.fill(OFF)
     client.disconnect()
 except Exception:
     pass
