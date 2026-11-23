@@ -1,8 +1,8 @@
 {
   "uuid": "airglow@eli-beskin.github.io",
   "name": "Airglow Lighting",
-  "description": "Quick Settings toggle for the Airglow stopgap lighting effects: turn the case lighting on or off and pick stars, cats or the music equalizer. Calls ~/.local/bin/airglow-fx.",
+  "description": "Quick Settings toggle for the Airglow stopgap lighting effects: turn the case lighting on or off and pick stars, cats or the music equalizer. A settings window sets the fan and graphics card colors and how the graphics card blinks. Calls ~/.local/bin/airglow-fx.",
   "shell-version": ["48", "49", "50"],
   "url": "https://github.com/eli-beskin/airglow",
-  "version-name": "0.1"
+  "version-name": "0.2"
 }

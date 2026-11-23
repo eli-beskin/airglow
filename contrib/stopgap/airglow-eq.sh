@@ -7,7 +7,8 @@
 #   • blade petals:   a two-armed spinner that speeds up with the music and kicks on beats,
 #                     changing color on every beat
 #   • cooler ring:    the same spinner as the petals, scaled to the ring and in step with them
-# The GPU is never touched.
+#   • graphics card:  a beat light — flashes on every bass beat in the spinner's color,
+#                     a dim glow with the bass in between
 #
 # Usage:
 #   ./airglow-eq.sh                         run the effect (Ctrl+C to stop)
@@ -50,6 +51,8 @@ set -euo pipefail
                               # | pulse = ring pulses with the bass | off
 : "${COOLER_ARMS:=2}"         # spin: arms on the ring
 : "${COOLER_DIR:=1}"          # spin: 1 = clockwise (same index direction as the petals), -1 = reverse
+: "${GPU:=beat}"              # beat = graphics card flashes on beats | off = leave it alone
+: "${GPU_FPS:=12}"            # max GPU updates per second (it sits on a slow I²C bus); beats skip the limit
 : "${BRIGHT:=1.0}"            # global brightness 0..1
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"
@@ -97,7 +100,7 @@ fi
 
 export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
-       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
+       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR GPU GPU_FPS BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_MODE="$MODE"
@@ -402,6 +405,16 @@ def cooler_pixels(n, lv, loud, sp):
     return out
 
 
+GPU_MODE = E["GPU"]
+
+
+def gpu_pixel(lv, sp):
+    """Beat light: a flash in the spinner's color on every beat, a dim bass glow in between."""
+    if GPU_MODE != "beat":
+        return BLACK
+    return (sp.color(), min(1.0, 0.2 + 0.35 * lv[0] + 0.9 * sp.flash))
+
+
 src = make_source()
 an, bars, sp = Analyzer(), Bars(), Spinner()
 state = {"lv": [0.0] * 3, "loud": 0.0}
@@ -442,6 +455,7 @@ if MODE == "--preview":
             lines.append("")
             lines.append("   petals 12→ " + " ".join(term(hub[k], "●") for k in range(PETALS)) + RESET)
             lines.append("   cooler  3→ " + " ".join(term(p, "●") for p in cool) + RESET)
+            lines.append("   gpu        " + term(gpu_pixel(state["lv"], sp), "● ● ●") + RESET)
             lines.append("")
             lv = state["lv"]
             lines.append(f"   bass   {meter(lv[0])}")
@@ -470,6 +484,44 @@ def led(p):
     return RGBColor(round(r * k), round(g * k), round(b * k))
 
 
+class GpuOut:
+    """The graphics card as a separate OpenRGB device: Direct mode, one color for all its
+    LEDs, at most GPU_FPS writes per second and only when the color changed. An urgent
+    write (a beat) skips the rate limit, so no flash is lost."""
+
+    def __init__(self, enabled, fps):
+        self.enabled, self.dt = enabled, 1.0 / max(1.0, fps)
+        self.dev, self.last, self.next_t = None, None, 0.0
+
+    def attach(self, client):
+        self.dev, self.last = None, None
+        if not self.enabled:
+            return
+        gpu = next((d for d in client.devices if d.type == DeviceType.GPU and d.leds), None)
+        if gpu is None:
+            print("No graphics card in OpenRGB; lighting the case only.", file=sys.stderr, flush=True)
+            return
+        try:
+            gpu.set_mode("direct")
+        except Exception as e:  # noqa: BLE001 — no Direct mode, or the card refused
+            print(f"Cannot drive '{gpu.name}' ({e}); lighting the case only.", file=sys.stderr, flush=True)
+            return
+        self.dev = gpu
+
+    def push(self, color, now, urgent=False):
+        if self.dev is None or color == self.last or (now < self.next_t and not urgent):
+            return
+        self.dev.set_colors([color] * len(self.dev.leds), fast=True)
+        self.last, self.next_t = color, now + self.dt
+
+    def fill(self, color):
+        if self.dev is not None:
+            self.dev.set_colors([color] * len(self.dev.leds), fast=True)
+
+
+gpu = GpuOut(GPU_MODE == "beat", float(E["GPU_FPS"]))
+
+
 def connect():
     client = OpenRGBClient(E["OPENRGB_HOST"], int(E["OPENRGB_PORT"]), "airglow-eq")
     dev = next((d for d in client.devices
@@ -487,6 +539,7 @@ def connect():
     if resized:
         dev.update()
     dev.set_mode("direct")          # resets Aura to black -> full frame must follow at once
+    gpu.attach(client)              # same rule for the GPU: its first color follows at once
     return client, dev
 
 
@@ -527,7 +580,8 @@ def build_frame():
 
 last, last_wall = None, time.time()
 prev = next_t = time.monotonic()
-print(f"Equalizer on '{dev.name}', audio: {src.label}. Ctrl+C to stop.", flush=True)
+where = f"'{dev.name}'" + (f" and '{gpu.dev.name}'" if gpu.dev else "")
+print(f"Equalizer on {where}, audio: {src.label}. Ctrl+C to stop.", flush=True)
 while running:
     try:
         wall = time.time()
@@ -543,6 +597,7 @@ while running:
         if frame != last:
             dev.set_colors(frame, fast=True)
             last = frame
+        gpu.push(led(gpu_pixel(state["lv"], sp)), now, urgent=sp.flash > 0.95)
     except (ConnectionError, OSError, BrokenPipeError) as e:
         print(f"OpenRGB connection lost ({e}); retrying in 3 s…", file=sys.stderr, flush=True)
         time.sleep(3)
@@ -563,6 +618,7 @@ if os.path.exists(E["OFF_FLAG"]):    # `airglow-fx off`: stop to black whatever 
 try:
     if ON_EXIT == "off":
         dev.set_colors([OFF for z in dev.zones for _ in z.leds], fast=True)
+        gpu.fill(OFF)
     client.disconnect()
 except Exception:
     pass

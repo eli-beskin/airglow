@@ -10,9 +10,9 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 
 | File | Installed to | What |
 |---|---|---|
-| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect |
-| `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect |
-| `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler |
+| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect; the graphics card blinks |
+| `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect; the graphics card blinks |
+| `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler, beat light on the graphics card |
 | `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
 | `openrgb.service` | `~/.config/systemd/user/` | OpenRGB SDK server, localhost only |
 | `airglow-stars.service` | `~/.config/systemd/user/` | Stars effect, `DARK=0.15` |
@@ -49,7 +49,30 @@ airglow-fx current   # prints the running effect, or "off"
 
 `off` paints the LEDs black even for stars (whose `ON_EXIT=static` would otherwise leave a solid color): while it runs, `airglow-fx` creates `$XDG_RUNTIME_DIR/airglow/off-requested`, and every effect checks that file when it stops. The last effect is remembered in `~/.local/state/airglow/last-effect`.
 
-For a switch in GNOME's Quick Settings menu, see [../gnome-extension](../gnome-extension/).
+For a switch in GNOME's Quick Settings menu and a settings window for colors, see [../gnome-extension](../gnome-extension/).
+
+## Live settings: colors and GPU blinking
+
+Stars and cats read their colors and the graphics card's blink rate from `~/.config/airglow/stopgap.json` (`$AIRGLOW_CONFIG` overrides the path). The GNOME extension's settings window writes this file; it can also be edited by hand:
+
+```json
+{
+  "stars": {"fans": [0, 255, 94], "gpu": [0, 255, 94],  "gpu_blink_hz": 0.5, "gpu_smooth": true},
+  "cats":  {"fans": [0, 255, 94], "gpu": [255, 16, 120], "gpu_blink_hz": 1,   "gpu_smooth": false}
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `fans` | Fans and cooler color, `[r, g, b]` 0..255 |
+| `gpu` | Graphics card color, `[r, g, b]` 0..255 |
+| `gpu_blink_hz` | Blinks per second, 0..4; `0` = steady light |
+| `gpu_smooth` | `true` = smooth breathing, `false` = hard on/off |
+
+- The effects check the file 4× per second and apply changes without a restart.
+- A missing key falls back to the environment default (`COLOR`, `GPU_COLOR`, `GPU_BLINK_HZ`, `GPU_SMOOTH`); a broken file is ignored with one log line and the last good values stay.
+- The blink phase is integrated over time, so moving the frequency slider changes the speed without a jump.
+- The equalizer has no settings in the file: its colors follow the music.
 
 After an image update that changes the host Python version, recreate the venv (first two lines).
 
@@ -57,7 +80,8 @@ After an image update that changes the host Python version, recreate the venv (f
 
 - **Bash wrapper:** finds a Python that has `openrgb` (the venv first), checks that `127.0.0.1:6742` is reachable via `/dev/tcp`, exports settings as environment variables, then `exec`s an embedded Python program from a heredoc (that is why the process shows up as `python -`).
 - **Python loop:** `openrgb-python` client, ~30 FPS fixed timestep, gamma 2.2, sends a frame only when it changed, sends a full frame right after `set_mode('direct')` (the Aura controller resets to black), reconnects after sleep/resume (wall-clock jump > 5 s) and on connection loss.
-- The device is found by the name substring `B660`; GPU-type devices are always skipped. Zones are resized to 12 / 0 / 39; the unpopulated "Aura Mainboard" zone is kept black.
+- The motherboard is found by the name substring `B660` (GPU-type devices never match). Zones are resized to 12 / 0 / 39; the unpopulated "Aura Mainboard" zone is kept black.
+- The graphics card is the first GPU-type device in OpenRGB. It gets `set_mode('direct')` at connect and one color for all its LEDs. Its writes are capped at `GPU_FPS=12` per second and sent only when the color changes, because it sits on a slow I²C bus. No GPU in OpenRGB, or no Direct mode → one log line and the case is lit alone. `GPU=off` leaves the card untouched.
 - Every setting can be overridden via environment variables or `Environment=` lines in the unit file.
 
 Device and zones as reported by OpenRGB 1.1 (`--list`):
@@ -74,7 +98,8 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 
 - Fixed color `0,255,94`; dim background `BASE=0.25`; stars rise fast and fade slowly (smoothstep envelope), lifetime 1.2–3.5 s, `DENSITY=0.12`.
 - `DARK` = share of LEDs whose background is off; dark gaps re-roll every ~`DARK_DRIFT=8` s and fade over `DARK_FADE=1` s. The service uses `DARK=0.15`.
-- On exit: `ON_EXIT=static` (solid color).
+- Graphics card: same green, smooth breathing at 0.5 Hz by default.
+- On exit: `ON_EXIT=static` (solid color on the case and the graphics card).
 
 ### Cats (`airglow-cats.sh`)
 
@@ -83,7 +108,8 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - The cooler ring shows a band that follows each cat (`COOLER=band`; ring y = sine of the LED angle, idx 0 = 3 o'clock, clockwise).
 - Panel mapping: the viewer-facing LEFT panel, outer column (2) is leftmost → `idx = (2 - col_from_left) * 13 + row`.
 - Script default color is hot pink `255,16,120`; the service overrides it to green.
-- `--preview` draws the panel in the terminal without OpenRGB.
+- Graphics card: hot pink, hard on/off at 1 Hz by default.
+- `--preview` draws the panel and the GPU blink in the terminal without OpenRGB.
 - On exit: `ON_EXIT=off`.
 
 ### Equalizer (`airglow-eq.sh`)
@@ -93,7 +119,8 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - **Fan panels:** three bars, left→right as seen on the viewer-facing panel: bass (outer), mid, treble (next to the propeller). Low part tinted per bar (emerald / green / lime), then a shared green → yellow → red meter gradient; white peak dots hold `PEAK_HOLD=0.45` s and fall. Fast attack, `RELEASE=16` rows/s.
 - **Petals:** a two-armed comet spinner; speed grows with loudness, gets a kick on every beat, flashes and moves to the next palette color (cyan → violet → magenta → blue). Because idx 0–7 are shared with the top of the treble bar, `PETALS=blend` (default) lets the comet head override the bar there; `PETALS=spinner` and `PETALS=eq` give the shared LEDs to one side only.
 - **Cooler ring:** `COOLER=spin` (default) runs the petals' spinner on the ring: same speed, beat kicks and colors, tail scaled to the 12 LEDs, heads pointing the same way as on the petals. `COOLER_ARMS=2` sets the number of comets, `COOLER_DIR=-1` reverses the direction. `COOLER=level` fills the ring from the bottom by overall loudness in the meter colors; `COOLER=pulse` pulses it with the bass in the spinner color.
-- `--preview` draws panel, petals and cooler in the terminal (truecolor) from live audio; `SOURCE=demo` uses a built-in 124 BPM test beat, so no audio and no OpenRGB are needed.
+- **Graphics card:** a beat light. It flashes on every bass beat in the spinner's current color (so the color changes beat by beat), and between beats glows dimly with the bass. A beat write skips the `GPU_FPS` limit, so no flash is lost. `GPU=off` leaves the card alone.
+- `--preview` draws panel, petals, cooler and graphics card in the terminal (truecolor) from live audio; `SOURCE=demo` uses a built-in 124 BPM test beat, so no audio and no OpenRGB are needed.
 - Light-to-sound latency is about 50–60 ms (capture buffer + analysis window).
 - On exit: `ON_EXIT=off`.
 
