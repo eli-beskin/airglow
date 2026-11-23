@@ -84,9 +84,9 @@ export COLOR GPU GPU_COLOR GPU_BLINK_HZ GPU_SMOOTH GPU_FPS AIRGLOW_CONFIG \
 export AIRGLOW_MODE="$MODE"
 
 exec "$PY" - <<'PYEOF'
-import json, math, os, random, signal, sys, time
+import copy, json, math, os, random, signal, sys, time
 from openrgb import OpenRGBClient
-from openrgb.utils import RGBColor, DeviceType
+from openrgb.utils import RGBColor, DeviceType, ModeFlags
 
 E = os.environ
 MODE = E["AIRGLOW_MODE"]
@@ -208,6 +208,46 @@ class Blinker:
         return RGBColor(*(round(c * k) for c in self.color))
 
 
+def direct_mode(dev):
+    """The device's Direct mode, ready for set_mode().
+
+    openrgb-python 0.3.8 validates a mode before sending it, and some drivers report a
+    Direct mode whose own speed or brightness is outside its min..max (the Palit RTX 3080
+    does: "Mode validation failed. Required values invalid or not present"). Its
+    force=True path is broken in 0.3.8, so we send a copy with the values pulled into
+    range instead: brightness at its maximum, speed at its minimum."""
+    mode = next((m for m in dev.modes if m.name.lower() == "direct"), None)
+    if mode is None:
+        raise ValueError("no Direct mode")
+    m = copy.copy(mode)
+
+    def fit(value, lo, hi, prefer):
+        if lo is None or hi is None:
+            return value
+        if value is None or not min(lo, hi) <= value <= max(lo, hi):
+            return prefer
+        return value
+
+    if ModeFlags.HAS_SPEED in m.flags:
+        m.speed = fit(m.speed, m.speed_min, m.speed_max, m.speed_min)
+    else:
+        m.speed = m.speed_min = m.speed_max = None
+    if ModeFlags.HAS_BRIGHTNESS in m.flags:
+        top = None if m.brightness_min is None or m.brightness_max is None \
+            else max(m.brightness_min, m.brightness_max)
+        m.brightness = fit(m.brightness, m.brightness_min, m.brightness_max, top)
+    else:
+        m.brightness = m.brightness_min = m.brightness_max = None
+    if ModeFlags.HAS_MODE_SPECIFIC_COLOR in m.flags:
+        colors = list(m.colors or [])
+        lo = m.colors_min or 0
+        hi = m.colors_max if m.colors_max is not None else max(lo, len(colors))
+        m.colors = colors[:hi] + [RGBColor(0, 0, 0)] * max(0, lo - len(colors))
+    else:
+        m.colors = m.colors_min = m.colors_max = None
+    return m
+
+
 class GpuOut:
     """The graphics card as a separate OpenRGB device: Direct mode, one color for all its
     LEDs, at most GPU_FPS writes per second and only when the color changed."""
@@ -225,9 +265,15 @@ class GpuOut:
             print("No graphics card in OpenRGB; lighting the case only.", file=sys.stderr, flush=True)
             return
         try:
-            gpu.set_mode("direct")
+            gpu.set_mode(direct_mode(gpu))
         except Exception as e:  # noqa: BLE001 — no Direct mode, or the card refused
-            print(f"Cannot drive '{gpu.name}' ({e}); lighting the case only.", file=sys.stderr, flush=True)
+            m = next((m for m in gpu.modes if m.name.lower() == "direct"), None)
+            detail = "" if m is None else (
+                f"; Direct mode: flags={int(m.flags)} speed={m.speed} [{m.speed_min}..{m.speed_max}]"
+                f" brightness={m.brightness} [{m.brightness_min}..{m.brightness_max}]"
+                f" colors={len(m.colors or [])} [{m.colors_min}..{m.colors_max}]")
+            print(f"Cannot drive '{gpu.name}' ({e}{detail}); lighting the case only.",
+                  file=sys.stderr, flush=True)
             return
         self.dev = gpu
 
@@ -257,6 +303,12 @@ def apply_config():
     blink.configure(rgb3(v["gpu"], rgb3(d["gpu"], FAN)),
                     num(v["gpu_blink_hz"], 0.0, MAX_HZ, num(d["gpu_blink_hz"], 0.0, MAX_HZ, 0.0)),
                     flag(v["gpu_smooth"], flag(d["gpu_smooth"], True)))
+
+
+def settings_line():
+    hx = lambda c: "#%02X%02X%02X" % tuple(c)
+    rate = "steady" if blink.hz <= 0 else f"{blink.hz:g} Hz {'smooth' if blink.smooth else 'hard'}"
+    return f"Settings: fans {hx(FAN)}, GPU {hx(blink.color)} {rate}"
 
 
 cfg.poll(0.0)
@@ -413,6 +465,7 @@ def build_frame():
 
 last, last_wall = None, time.time()
 prev = next_t = time.monotonic()
+log_due, next_log = True, 0.0
 where = f"'{dev.name}'" + (f" and '{gpu.dev.name}'" if gpu.dev else "")
 print(f"Falling cats on {where}. Ctrl+C to stop.", flush=True)
 while running:
@@ -427,6 +480,10 @@ while running:
         dt, prev = min(0.1, now - prev), now
         if cfg.poll(now):                     # colors or blink rate changed in the settings
             apply_config()
+            log_due = True
+        if log_due and now >= next_log:       # journal: what is applied, at most once a second
+            print(settings_line(), flush=True)
+            log_due, next_log = False, now + 1.0
         step(DT)
         frame = build_frame()
         if frame != last:

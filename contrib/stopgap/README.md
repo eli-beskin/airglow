@@ -69,7 +69,7 @@ Stars and cats read their colors and the graphics card's blink rate from `~/.con
 | `gpu_blink_hz` | Blinks per second, 0..4; `0` = steady light |
 | `gpu_smooth` | `true` = smooth breathing, `false` = hard on/off |
 
-- The effects check the file 4× per second and apply changes without a restart.
+- The effects check the file 4× per second and apply changes without a restart. Each applied change is logged, at most once a second: `Settings: fans #FF0000, GPU #0000FF 2 Hz hard` — watch it with `journalctl --user -f -u 'airglow-*'`.
 - A missing key falls back to the environment default (`COLOR`, `GPU_COLOR`, `GPU_BLINK_HZ`, `GPU_SMOOTH`); a broken file is ignored with one log line and the last good values stay.
 - The blink phase is integrated over time, so moving the frequency slider changes the speed without a jump.
 - The equalizer has no settings in the file: its colors follow the music.
@@ -81,7 +81,7 @@ After an image update that changes the host Python version, recreate the venv (f
 - **Bash wrapper:** finds a Python that has `openrgb` (the venv first), checks that `127.0.0.1:6742` is reachable via `/dev/tcp`, exports settings as environment variables, then `exec`s an embedded Python program from a heredoc (that is why the process shows up as `python -`).
 - **Python loop:** `openrgb-python` client, ~30 FPS fixed timestep, gamma 2.2, sends a frame only when it changed, sends a full frame right after `set_mode('direct')` (the Aura controller resets to black), reconnects after sleep/resume (wall-clock jump > 5 s) and on connection loss.
 - The motherboard is found by the name substring `B660` (GPU-type devices never match). Zones are resized to 12 / 0 / 39; the unpopulated "Aura Mainboard" zone is kept black.
-- The graphics card is the first GPU-type device in OpenRGB. It gets `set_mode('direct')` at connect and one color for all its LEDs. Its writes are capped at `GPU_FPS=12` per second and sent only when the color changes, because it sits on a slow I²C bus. No GPU in OpenRGB, or no Direct mode → one log line and the case is lit alone. `GPU=off` leaves the card untouched.
+- The graphics card is the first GPU-type device in OpenRGB. It gets Direct mode at connect and one color for all its LEDs. The Palit RTX 3080 reports a Direct mode whose own brightness or speed is outside its min..max, so `openrgb-python` 0.3.8 refuses to send it ("Mode validation failed"), and its `force=True` path is broken. The effects therefore send a copy of the mode with the values pulled into range (brightness at maximum). If it still fails, the log line shows the mode's flags and values. Its writes are capped at `GPU_FPS=12` per second and sent only when the color changes, because it sits on a slow I²C bus. No GPU in OpenRGB, or no Direct mode → one log line and the case is lit alone. `GPU=off` leaves the card untouched.
 - Every setting can be overridden via environment variables or `Environment=` lines in the unit file.
 
 Device and zones as reported by OpenRGB 1.1 (`--list`):

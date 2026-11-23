@@ -475,13 +475,54 @@ if MODE == "--preview":
 
 # ---------- OpenRGB ----------
 from openrgb import OpenRGBClient
-from openrgb.utils import RGBColor, DeviceType
+from openrgb.utils import RGBColor, DeviceType, ModeFlags
+import copy
 
 
 def led(p):
     (r, g, b), k = p
     k = BRIGHT * max(0.0, min(1.0, k)) ** GAMMA          # gamma on intensity only: hue stays put
     return RGBColor(round(r * k), round(g * k), round(b * k))
+
+
+def direct_mode(dev):
+    """The device's Direct mode, ready for set_mode().
+
+    openrgb-python 0.3.8 validates a mode before sending it, and some drivers report a
+    Direct mode whose own speed or brightness is outside its min..max (the Palit RTX 3080
+    does: "Mode validation failed. Required values invalid or not present"). Its
+    force=True path is broken in 0.3.8, so we send a copy with the values pulled into
+    range instead: brightness at its maximum, speed at its minimum."""
+    mode = next((m for m in dev.modes if m.name.lower() == "direct"), None)
+    if mode is None:
+        raise ValueError("no Direct mode")
+    m = copy.copy(mode)
+
+    def fit(value, lo, hi, prefer):
+        if lo is None or hi is None:
+            return value
+        if value is None or not min(lo, hi) <= value <= max(lo, hi):
+            return prefer
+        return value
+
+    if ModeFlags.HAS_SPEED in m.flags:
+        m.speed = fit(m.speed, m.speed_min, m.speed_max, m.speed_min)
+    else:
+        m.speed = m.speed_min = m.speed_max = None
+    if ModeFlags.HAS_BRIGHTNESS in m.flags:
+        top = None if m.brightness_min is None or m.brightness_max is None \
+            else max(m.brightness_min, m.brightness_max)
+        m.brightness = fit(m.brightness, m.brightness_min, m.brightness_max, top)
+    else:
+        m.brightness = m.brightness_min = m.brightness_max = None
+    if ModeFlags.HAS_MODE_SPECIFIC_COLOR in m.flags:
+        colors = list(m.colors or [])
+        lo = m.colors_min or 0
+        hi = m.colors_max if m.colors_max is not None else max(lo, len(colors))
+        m.colors = colors[:hi] + [RGBColor(0, 0, 0)] * max(0, lo - len(colors))
+    else:
+        m.colors = m.colors_min = m.colors_max = None
+    return m
 
 
 class GpuOut:
@@ -502,9 +543,15 @@ class GpuOut:
             print("No graphics card in OpenRGB; lighting the case only.", file=sys.stderr, flush=True)
             return
         try:
-            gpu.set_mode("direct")
+            gpu.set_mode(direct_mode(gpu))
         except Exception as e:  # noqa: BLE001 — no Direct mode, or the card refused
-            print(f"Cannot drive '{gpu.name}' ({e}); lighting the case only.", file=sys.stderr, flush=True)
+            m = next((m for m in gpu.modes if m.name.lower() == "direct"), None)
+            detail = "" if m is None else (
+                f"; Direct mode: flags={int(m.flags)} speed={m.speed} [{m.speed_min}..{m.speed_max}]"
+                f" brightness={m.brightness} [{m.brightness_min}..{m.brightness_max}]"
+                f" colors={len(m.colors or [])} [{m.colors_min}..{m.colors_max}]")
+            print(f"Cannot drive '{gpu.name}' ({e}{detail}); lighting the case only.",
+                  file=sys.stderr, flush=True)
             return
         self.dev = gpu
 

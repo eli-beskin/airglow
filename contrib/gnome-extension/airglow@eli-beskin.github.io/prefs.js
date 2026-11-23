@@ -14,6 +14,7 @@
 
 import Adw from 'gi://Adw';
 import Gdk from 'gi://Gdk';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Graphene from 'gi://Graphene';
@@ -43,6 +44,9 @@ const STRINGS = {
     en: {
         page: 'Lighting',
         pageHint: 'Changes apply right away while the effect is running.',
+        nowOn: 'Now on the case',
+        nowOff: 'Lighting is off',
+        onCase: 'on the case',
         stars: 'Stars',
         starsHint: 'Starry sky on the fans and the cooler; the graphics card blinks.',
         cats: 'Cats',
@@ -64,6 +68,9 @@ const STRINGS = {
     ru: {
         page: 'Подсветка',
         pageHint: 'Изменения применяются сразу, если эффект запущен.',
+        nowOn: 'Сейчас на корпусе',
+        nowOff: 'Подсветка выключена',
+        onCase: 'на корпусе',
         stars: 'Звёзды',
         starsHint: 'Звёздное небо на вентиляторах и кулере, видеокарта мигает.',
         cats: 'Котики',
@@ -603,6 +610,29 @@ function equalizerGroup() {
     return group;
 }
 
+// Which effect is running: `airglow-fx current` prints stars | cats | eq | off.
+// Shown in the window so it is clear which group changes the case right now.
+function readCurrentEffect(cancellable, callback) {
+    const script = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', 'airglow-fx']);
+    let proc;
+    try {
+        proc = Gio.Subprocess.new([script, 'current'],
+            Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+    } catch (e) {
+        callback(null);                              // airglow-fx not installed
+        return;
+    }
+    proc.communicate_utf8_async(null, cancellable, (p, res) => {
+        try {
+            const [, stdout] = p.communicate_utf8_finish(res);
+            callback(stdout?.trim() || null);
+        } catch (e) {
+            if (!e.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED))
+                callback(null);
+        }
+    });
+}
+
 export default class AirglowPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         const store = new Store();
@@ -612,12 +642,38 @@ export default class AirglowPreferences extends ExtensionPreferences {
         const page = new Adw.PreferencesPage({
             title: T.page, icon_name: 'preferences-color-symbolic', description: T.pageHint,
         });
-        page.add(effectGroup(store, 'stars'));
-        page.add(effectGroup(store, 'cats'));
-        page.add(equalizerGroup());
+        const groups = {
+            stars: effectGroup(store, 'stars'),
+            cats: effectGroup(store, 'cats'),
+            eq: equalizerGroup(),
+        };
+        for (const g of Object.values(groups))
+            page.add(g);
         window.add(page);
 
+        // Mark the running effect, and re-check every 2 s while the window is open.
+        const cancellable = new Gio.Cancellable();
+        let shown;
+        const refresh = () => readCurrentEffect(cancellable, fx => {
+            if (fx === shown)
+                return;
+            shown = fx;
+            for (const [id, g] of Object.entries(groups))
+                g.title = id === fx ? `${T[id]} · ${T.onCase}` : T[id];
+            const now = fx in groups ? `${T.nowOn}: ${T[fx]}.` : fx === 'off' ? `${T.nowOff}.` : '';
+            page.description = now ? `${T.pageHint} ${now}` : T.pageHint;
+        });
+        refresh();
+        let timer = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 2, () => {
+            refresh();
+            return GLib.SOURCE_CONTINUE;
+        });
+
         window.connect('close-request', () => {
+            if (timer)
+                GLib.source_remove(timer);
+            timer = 0;
+            cancellable.cancel();
             store.flush();
             return false;
         });

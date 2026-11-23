@@ -16,6 +16,7 @@ It is a thin front end: switching runs `~/.local/bin/airglow-fx`, and the state 
 - **Fans and cooler** and **Graphics card** colors: a color wheel (hue around, saturation from the centre), a brightness slider, R / G / B fields, a HEX field (`#00FF5E` or `0, 255, 94`) and quick presets.
 - **Graphics card blinking:** 0–4 blinks per second, 0 = steady light; **Smooth blinking** on = breathing, off = sharp flashes.
 - **Reset** returns a group to its defaults.
+- The top line and the group title show which effect is on the case right now (from `airglow-fx current`, re-checked every 2 s), so it is clear which group changes the lights.
 
 The **Equalizer** group only describes what the graphics card does: its colors follow the music.
 
