@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# airglow-stars.sh — temporary "starry sky" effect for the case fans; the CPU cooler ring is a
-# black hole's accretion disk in the same color.
+# airglow-stars.sh — temporary "starry sky" effect for the CPU cooler and case fans.
 # A stopgap until Airglow is ready. Talks to the OpenRGB SDK server on 127.0.0.1:6742.
 # The graphics card blinks in its own color.
 #
@@ -31,9 +30,6 @@ set -euo pipefail
 : "${DARK:=0}"                # share of LEDs whose background is OFF (dark gaps), e.g. 0.15
 : "${DARK_DRIFT:=8}"          # avg seconds before an LED re-rolls dark/lit (gaps slowly wander)
 : "${DARK_FADE:=1.0}"         # seconds for a gap to fade in/out
-: "${COOLER:=disk}"           # disk = black hole accretion disk on the cooler ring | stars = stars like the fans
-: "${DISK_SPEED:=0.6}"        # disk: turns per second of the hot clumps (the bright side turns 5× slower)
-: "${DISK_DIR:=1}"            # disk: 1 = clockwise (as seen through the side glass), -1 = the other way
 : "${STAR_MIN:=1.2}"          # star lifetime, seconds (random between MIN and MAX)
 : "${STAR_MAX:=3.5}"
 : "${FPS:=30}"
@@ -79,7 +75,6 @@ fi
 
 export COLOR GPU GPU_COLOR GPU_BLINK_HZ GPU_SMOOTH GPU_FPS AIRGLOW_CONFIG \
        BASE PEAK DENSITY DARK DARK_DRIFT DARK_FADE STAR_MIN STAR_MAX FPS GAMMA ON_EXIT \
-       COOLER DISK_SPEED DISK_DIR \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_LIST="${1:-}"
@@ -305,76 +300,10 @@ cfg.poll(0.0)
 apply_config()
 
 
-def color_at(level, white=0.0):
-    """Perceived brightness 0..1 -> gamma-corrected RGBColor of the fan color,
-    optionally shifted towards white (0..1) for the hottest spots of the disk."""
+def color_at(level):
+    """Perceived brightness 0..1 -> gamma-corrected RGBColor of the fan color."""
     k = max(0.0, min(1.0, level)) ** GAMMA
-    w = max(0.0, min(1.0, white))
-    return RGBColor(*(round((c + (255 - c) * w) * k) for c in FAN))
-
-
-# ---------- cooler ring: a black hole's accretion disk ----------
-COOLER_MODE = E["COOLER"]
-DISK_SPEED = float(E["DISK_SPEED"])
-DISK_DIR = -1 if E["DISK_DIR"].strip() == "-1" else 1
-
-
-class AccretionDisk:
-    """The cooler ring as a black hole's accretion disk, in the fan color:
-    • a brighter side that slowly swings round — relativistic beaming: gas moving
-      towards you looks brighter than gas moving away;
-    • hot clumps on faster orbits with fading tails, which flare up for a few turns
-      and fade, and new ones take their place;
-    • slow turbulent flicker along the ring.
-    The brightest spots shift towards white, like hotter gas. Positions are in turns
-    (0..1) around the ring; LED k sits at k/n, clockwise (idx 0 = 3 o'clock)."""
-
-    CLUMPS = 3
-
-    def __init__(self, n):
-        self.n, self.t = n, 0.0
-        self.beam = random.random()
-        self.swirl = [random.random() for _ in range(n)]
-        self.clumps = [self._clump(random.random()) for _ in range(self.CLUMPS)]
-
-    @staticmethod
-    def _clump(age_share=0.0):
-        life = random.uniform(2.5, 6.0)
-        return {"pos": random.random(), "speed": DISK_SPEED * random.uniform(0.7, 1.3),
-                "life": life, "age": age_share * life,
-                "tail": random.uniform(0.18, 0.32), "power": random.uniform(0.6, 1.0)}
-
-    def step(self, dt):
-        self.t += dt
-        self.beam = (self.beam + 0.2 * DISK_SPEED * dt) % 1.0
-        for i, c in enumerate(self.clumps):
-            c["pos"] = (c["pos"] + c["speed"] * dt) % 1.0
-            c["age"] += dt
-            if c["age"] >= c["life"]:
-                self.clumps[i] = self._clump()
-
-    def pixels(self):
-        out = []
-        for k in range(self.n):
-            a = (DISK_DIR * k / self.n) % 1.0
-            beaming = (0.5 + 0.5 * math.cos(2 * math.pi * (a - self.beam))) ** 2
-            level = 0.24 + 0.4 * beaming                   # always a visible ring
-            ph = self.swirl[k]
-            level *= 1 + 0.2 * math.sin(2 * math.pi * (0.7 * self.t + ph)) \
-                           * math.sin(2 * math.pi * (0.23 * self.t + 2 * ph))
-            white = 0.15 * beaming * beaming
-            for c in self.clumps:
-                d = (c["pos"] - a) % 1.0                 # how far LED k is behind the clump
-                if d >= c["tail"]:
-                    continue
-                v = (1 - d / c["tail"]) ** 2 * math.sin(math.pi * c["age"] / c["life"]) * c["power"]
-                level += 0.8 * v
-                white += 0.6 * v * v
-            out.append((min(1.0, level), min(0.6, white)))
-        return out
-
-
-disk = AccretionDisk(SIZES[E["COOLER_ZONE"]])
+    return RGBColor(round(FAN[0] * k), round(FAN[1] * k), round(FAN[2] * k))
 
 
 def envelope(p):
@@ -445,10 +374,6 @@ def build_frame(now):
         if z.name not in stars:
             frame += [off_c] * len(z.leds)      # unpopulated "Aura Mainboard" etc.
             continue
-        if z.name == E["COOLER_ZONE"] and COOLER_MODE == "disk":
-            px = disk.pixels()
-            frame += [color_at(*px[i]) if i < len(px) else off_c for i in range(len(z.leds))]
-            continue
         slots, tgt, lvl = stars[z.name], bg_target[z.name], bg_level[z.name]
         for i in range(len(z.leds)):
             if i >= len(slots):
@@ -489,7 +414,6 @@ while running:
         last_wall = wall
         now = time.monotonic()
         dt, prev = min(0.1, now - prev), now
-        disk.step(dt)
         if cfg.poll(now):                     # colors or blink rate changed in the settings
             apply_config()
             log_due = True

@@ -10,7 +10,7 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 
 | File | Installed to | What |
 |---|---|---|
-| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect on the fans, an accretion disk on the cooler; the graphics card blinks |
+| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect on the fans and the cooler; the graphics card blinks |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect; the graphics card blinks |
 | `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler, beat light on the graphics card |
 | `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
@@ -100,7 +100,6 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 
 - Fixed color `0,255,94`; dim background `BASE=0.25`; stars rise fast and fade slowly (smoothstep envelope), lifetime 1.2–3.5 s, `DENSITY=0.12`.
 - `DARK` = share of LEDs whose background is off; dark gaps re-roll every ~`DARK_DRIFT=8` s and fade over `DARK_FADE=1` s. The service uses `DARK=0.15`.
-- **Cooler ring:** a black hole's accretion disk in the fan color (`COOLER=disk`, default; `COOLER=stars` gives it stars like the fans). A brighter side slowly swings round (relativistic beaming: gas moving towards you looks brighter), three hot clumps orbit faster with fading tails, flare up for a few turns and are replaced, and a slow turbulence ripples along the ring. The brightest spots shift towards white, like hotter gas. `DISK_SPEED=0.6` turns per second for the clumps (the bright side turns 5× slower), `DISK_DIR=-1` reverses the direction.
 - Graphics card: same green, smooth breathing at 0.5 Hz by default.
 - On exit: `ON_EXIT=static` (solid color on the case and the graphics card).
 
