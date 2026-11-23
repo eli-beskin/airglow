@@ -19,6 +19,8 @@
 set -euo pipefail
 
 # ---------- settings ----------
+: "${VIEW:=side}"             # side = through the side glass (left fan panels face you)
+                              # | front = through the front panel (right panels face you)  (stopgap.json: "general": "view")
 : "${COLOR:=255,16,120}"      # fans + cooler R,G,B, hot pink    (stopgap.json: "fans")
 : "${GPU:=on}"                # on = also drive the graphics card | off = leave it alone
 : "${GPU_COLOR:=255,16,120}"  # GPU R,G,B                         (stopgap.json: "gpu")
@@ -77,7 +79,7 @@ if [[ "$MODE" != "--preview" ]] && ! (exec 3<>"/dev/tcp/$OPENRGB_HOST/$OPENRGB_P
     exit 1
 fi
 
-export COLOR GPU GPU_COLOR GPU_BLINK_HZ GPU_SMOOTH GPU_FPS AIRGLOW_CONFIG \
+export COLOR GPU GPU_COLOR GPU_BLINK_HZ GPU_SMOOTH GPU_FPS AIRGLOW_CONFIG VIEW \
        CAT SPEED GAP_MIN GAP_MAX SMOOTH COOLER BAND_WIDTH PEAK FPS GAMMA ON_EXIT \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
@@ -315,6 +317,22 @@ cfg.poll(0.0)
 apply_config()
 
 
+# Which fan panel faces the viewer (stopgap.json: "general": {"view": "side" | "front"}).
+VIEWS = ("side", "front")
+view_cfg = LiveConfig(os.path.expanduser(E["AIRGLOW_CONFIG"]), "general", {"view": E["VIEW"]})
+VIEW = "side"
+
+
+def apply_view():
+    global VIEW
+    v = view_cfg.values["view"]
+    VIEW = v if v in VIEWS else (E["VIEW"] if E["VIEW"] in VIEWS else "side")
+
+
+view_cfg.poll(0.0)
+apply_view()
+
+
 def color_at(level):
     """Perceived brightness 0..1 -> gamma-corrected RGBColor of the fan color."""
     k = max(0.0, min(1.0, level)) ** GAMMA
@@ -322,8 +340,14 @@ def color_at(level):
 
 
 def panel_index(row, col_from_left):
-    """Viewer-facing LEFT panel: row 0 = top, col 0 = inner (next to the propeller).
-    The left panel sits left of the propeller, so the outer column (2) is leftmost."""
+    """(row, column) as the viewer sees the fan panel -> LED index (0-based, SDK).
+    side:  the LEFT panel faces you: row 0 = top, the outer column (2) is leftmost,
+           the inner column (idx 0..12) is next to the propeller.
+    front: the RIGHT panel faces you. It is the same board turned 180°, so idx 0 is at the
+           bottom, in the inner column, which is on your left next to the propeller.
+    idx 0..7 also drive the blade petals."""
+    if VIEW == "front":
+        return col_from_left * ROWS + (ROWS - 1 - row)
     return (COLS - 1 - col_from_left) * ROWS + row
 
 
@@ -382,12 +406,14 @@ def cooler_levels():
 
 # ---------- terminal preview ----------
 if MODE == "--preview":
-    print("Fan panel as you see it (3 × 13). Ctrl+C to stop.")
+    print(f"Fan panel as you see it (3 × 13), view: {VIEW}. Ctrl+C to stop.")
     shades = " .:-=+*#@"
     try:
         while True:
             if cfg.poll(time.monotonic()):
                 apply_config()
+            if view_cfg.poll(time.monotonic()):
+                apply_view()
             step(DT * 2)
             lv = hub_levels()
             g = blink.level(DT * 2)
@@ -481,8 +507,11 @@ while running:
         if cfg.poll(now):                     # colors or blink rate changed in the settings
             apply_config()
             log_due = True
+        if view_cfg.poll(now):                # turned to the other side of the case
+            apply_view()
+            log_due = True
         if log_due and now >= next_log:       # journal: what is applied, at most once a second
-            print(settings_line(), flush=True)
+            print(f"{settings_line()}, view {VIEW}", flush=True)
             log_due, next_log = False, now + 1.0
         step(DT)
         frame = build_frame()

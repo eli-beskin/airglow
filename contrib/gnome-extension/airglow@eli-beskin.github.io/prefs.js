@@ -1,9 +1,11 @@
 // Airglow Lighting — settings window (opens from Quick Settings → Lighting → Colors…,
 // or from the Extensions app).
 //
-// What it sets, per effect (stars, cats):
-//   • fans + cooler color, graphics card color — a color wheel, brightness, R/G/B, HEX, presets;
-//   • how the graphics card blinks — rate (0 = steady) and smooth / hard.
+// What it sets:
+//   • which side of the case you look at (side glass or front panel), so the fan strip
+//     animations of cats and the equalizer face you;
+//   • per effect (stars, cats): fans + cooler color, graphics card color — a color wheel,
+//     brightness, R/G/B, HEX, presets — and how the graphics card blinks.
 // The equalizer picks its colors from the music, so it only gets a short description.
 //
 // How it works
@@ -27,12 +29,14 @@ const CONFIG = GLib.build_filenamev([CONFIG_DIR, 'stopgap.json']);
 const SAVE_DELAY_MS = 150;
 const MAX_HZ = 4;
 
-// Must match the defaults in contrib/stopgap/airglow-{stars,cats}.sh and their units.
+// Must match the defaults in contrib/stopgap/airglow-{stars,cats,eq}.sh and their units.
 const DEFAULTS = {
+    general: {view: 'side'},
     stars: {fans: [0, 255, 94], gpu: [0, 255, 94], gpu_blink_hz: 0.5, gpu_smooth: true},
     cats: {fans: [0, 255, 94], gpu: [255, 16, 120], gpu_blink_hz: 1, gpu_smooth: false},
 };
 const SECTIONS = Object.keys(DEFAULTS);
+const VIEWS = ['side', 'front'];
 
 const PRESETS = [
     [0, 255, 94], [0, 255, 20], [0, 200, 255], [0, 70, 255], [140, 0, 255],
@@ -47,8 +51,13 @@ const STRINGS = {
         nowOn: 'Now on the case',
         nowOff: 'Lighting is off',
         onCase: 'on the case',
+        viewGroup: 'View',
+        view: 'I look at the case',
+        viewHint: 'Side: through the glass, front: through the front panel. Cats and the equalizer turn their fan strip animations to face you.',
+        viewSide: 'From the side',
+        viewFront: 'From the front',
         stars: 'Stars',
-        starsHint: 'Starry sky on the fans and the cooler; the graphics card blinks.',
+        starsHint: 'Starry sky on the fans, a black hole accretion disk on the cooler; the graphics card blinks.',
         cats: 'Cats',
         catsHint: 'Falling cats on the fans; the graphics card blinks.',
         eq: 'Equalizer',
@@ -71,8 +80,13 @@ const STRINGS = {
         nowOn: 'Сейчас на корпусе',
         nowOff: 'Подсветка выключена',
         onCase: 'на корпусе',
+        viewGroup: 'Вид',
+        view: 'Смотрю на корпус',
+        viewHint: 'Сбоку — через стекло, спереди — через переднюю панель. Котики и эквалайзер развернут анимацию на полосках вентиляторов к тебе.',
+        viewSide: 'Сбоку',
+        viewFront: 'Спереди',
         stars: 'Звёзды',
-        starsHint: 'Звёздное небо на вентиляторах и кулере, видеокарта мигает.',
+        starsHint: 'Звёздное небо на вентиляторах, на кулере — аккреционный диск чёрной дыры, видеокарта мигает.',
         cats: 'Котики',
         catsHint: 'Падающие котики на вентиляторах, видеокарта мигает.',
         eq: 'Эквалайзер',
@@ -151,6 +165,8 @@ function sanitize(key, v) {
     }
     if (key === 'gpu_smooth')
         return typeof v === 'boolean' ? v : undefined;
+    if (key === 'view')
+        return VIEWS.includes(v) ? v : undefined;
     return undefined;
 }
 
@@ -604,6 +620,18 @@ function effectGroup(store, fx) {
     return group;
 }
 
+function viewGroup(store) {
+    const group = new Adw.PreferencesGroup({title: T.viewGroup});
+    const row = new Adw.ComboRow({
+        title: T.view, subtitle: T.viewHint, subtitle_lines: 0,
+        model: Gtk.StringList.new([T.viewSide, T.viewFront]),
+        selected: Math.max(0, VIEWS.indexOf(store.get('general', 'view'))),
+    });
+    row.connect('notify::selected', () => store.set('general', 'view', VIEWS[row.selected] ?? 'side'));
+    group.add(row);
+    return group;
+}
+
 function equalizerGroup() {
     const group = new Adw.PreferencesGroup({title: T.eq, description: T.eqHint});
     group.add(new Adw.ActionRow({title: T.gpu, subtitle: T.eqGpu, subtitle_lines: 0}));
@@ -647,6 +675,7 @@ export default class AirglowPreferences extends ExtensionPreferences {
             cats: effectGroup(store, 'cats'),
             eq: equalizerGroup(),
         };
+        page.add(viewGroup(store));
         for (const g of Object.values(groups))
             page.add(g);
         window.add(page);

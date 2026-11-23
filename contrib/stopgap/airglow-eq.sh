@@ -24,6 +24,9 @@ set -euo pipefail
 # ---------- settings ----------
 : "${SOURCE:=monitor}"        # monitor = default output (what you hear) | demo = built-in test beat
                               # | anything else = PipeWire target for pw-record (experimental)
+: "${VIEW:=side}"             # side = through the side glass (left fan panels face you)
+                              # | front = through the front panel (right panels face you)  (stopgap.json: "general": "view")
+: "${AIRGLOW_CONFIG:=${XDG_CONFIG_HOME:-$HOME/.config}/airglow/stopgap.json}"
 : "${BANDS:=40-250,250-2000,2000-12000}"   # Hz per bar, left→right as you see the panel
 : "${DYN:=30}"                # dB range of a full bar (smaller = jumpier bars)
 : "${GAIN:=0}"                # dB; raise if bars are too low, lower if they always hit the top
@@ -98,7 +101,7 @@ if [[ "$MODE" != "--preview" ]] && ! (exec 3<>"/dev/tcp/$OPENRGB_HOST/$OPENRGB_P
     exit 1
 fi
 
-export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
+export VIEW AIRGLOW_CONFIG SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
        SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR GPU GPU_FPS BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
@@ -106,7 +109,7 @@ export SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SM
 export AIRGLOW_MODE="$MODE"
 
 exec "$PY" - <<'PYEOF'
-import math, os, shutil, signal, subprocess, sys, threading, time
+import json, math, os, shutil, signal, subprocess, sys, threading, time
 import numpy as np
 
 E = os.environ
@@ -355,9 +358,67 @@ class Spinner:
         return self.ring(k, PETALS, ARMS)
 
 
+# ---------- live settings: only the view (colors follow the music) ----------
+class LiveConfig:
+    """Re-reads one section of stopgap.json whenever the file changes (checked 4× per second).
+    Keys missing from the file fall back to the environment defaults; a broken file keeps
+    the last good values."""
+
+    def __init__(self, path, section, defaults):
+        self.path, self.section, self.defaults = path, section, defaults
+        self.values, self.sig, self.next_check = dict(defaults), None, 0.0
+
+    def poll(self, now):
+        if now < self.next_check:
+            return False
+        self.next_check = now + 0.25
+        try:
+            st = os.stat(self.path)
+            sig = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            sig = None
+        if sig == self.sig:
+            return False
+        self.sig = sig
+        data = {}
+        if sig is not None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    data = json.load(f).get(self.section) or {}
+                if not isinstance(data, dict):
+                    raise ValueError("section is not an object")
+            except (OSError, ValueError, AttributeError) as e:
+                print(f"Ignoring {self.path}: {e}", file=sys.stderr, flush=True)
+                return False
+        self.values = {k: data.get(k, d) for k, d in self.defaults.items()}
+        return True
+
+
+# Which fan panel faces the viewer (stopgap.json: "general": {"view": "side" | "front"}).
+VIEWS = ("side", "front")
+view_cfg = LiveConfig(os.path.expanduser(E["AIRGLOW_CONFIG"]), "general", {"view": E["VIEW"]})
+VIEW = "side"
+
+
+def apply_view():
+    global VIEW
+    v = view_cfg.values["view"]
+    VIEW = v if v in VIEWS else (E["VIEW"] if E["VIEW"] in VIEWS else "side")
+
+
+view_cfg.poll(0.0)
+apply_view()
+
+
 def panel_index(row, col_from_left):
-    """Viewer-facing LEFT panel: row 0 = top, outer column is leftmost, inner column (idx 0..12)
-    is next to the propeller; idx 0..7 also drive the blade petals."""
+    """(row, column) as the viewer sees the fan panel -> LED index (0-based, SDK).
+    side:  the LEFT panel faces you: row 0 = top, the outer column (2) is leftmost,
+           the inner column (idx 0..12) is next to the propeller.
+    front: the RIGHT panel faces you. It is the same board turned 180°, so idx 0 is at the
+           bottom, in the inner column, which is on your left next to the propeller.
+    idx 0..7 also drive the blade petals."""
+    if VIEW == "front":
+        return col_from_left * ROWS + (ROWS - 1 - row)
     return (COLS - 1 - col_from_left) * ROWS + row
 
 
@@ -444,12 +505,14 @@ if MODE == "--preview":
         last = time.monotonic()
         while True:
             now = time.monotonic()
+            if view_cfg.poll(now):
+                apply_view()
             tick(now, min(0.1, now - last))
             last = now
             hub = hub_pixels(bars, sp)
             cool = cooler_pixels(SIZES[COOL], state["lv"], state["loud"], sp)
             lines = [f"Airglow EQ preview — {src.label}   Ctrl+C to stop", "",
-                     "   left fan panel (as you see it)    bass  mid  treble"]
+                     f"   fan panel as you see it ({VIEW})  bass  mid  treble"]
             for row in range(ROWS):
                 lines.append("   " + " ".join(term(hub[panel_index(row, c)]) for c in range(COLS)) + RESET)
             lines.append("")
@@ -638,6 +701,9 @@ while running:
             last = None
         last_wall = wall
         now = time.monotonic()
+        if view_cfg.poll(now):                # turned to the other side of the case
+            apply_view()
+            print(f"Settings: view {VIEW}", flush=True)
         tick(now, min(0.1, now - prev))
         prev = now
         frame = build_frame()

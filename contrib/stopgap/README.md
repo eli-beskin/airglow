@@ -10,7 +10,7 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 
 | File | Installed to | What |
 |---|---|---|
-| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect; the graphics card blinks |
+| `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect on the fans, an accretion disk on the cooler; the graphics card blinks |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect; the graphics card blinks |
 | `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler, beat light on the graphics card |
 | `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
@@ -51,12 +51,13 @@ airglow-fx current   # prints the running effect, or "off"
 
 For a switch in GNOME's Quick Settings menu and a settings window for colors, see [../gnome-extension](../gnome-extension/).
 
-## Live settings: colors and GPU blinking
+## Live settings: view, colors and GPU blinking
 
-Stars and cats read their colors and the graphics card's blink rate from `~/.config/airglow/stopgap.json` (`$AIRGLOW_CONFIG` overrides the path). The GNOME extension's settings window writes this file; it can also be edited by hand:
+The effects read their live settings from `~/.config/airglow/stopgap.json` (`$AIRGLOW_CONFIG` overrides the path): which side of the case you look at (cats and the equalizer), and the colors and the graphics card's blink rate (stars and cats). The GNOME extension's settings window writes this file; it can also be edited by hand:
 
 ```json
 {
+  "general": {"view": "side"},
   "stars": {"fans": [0, 255, 94], "gpu": [0, 255, 94],  "gpu_blink_hz": 0.5, "gpu_smooth": true},
   "cats":  {"fans": [0, 255, 94], "gpu": [255, 16, 120], "gpu_blink_hz": 1,   "gpu_smooth": false}
 }
@@ -64,6 +65,7 @@ Stars and cats read their colors and the graphics card's blink rate from `~/.con
 
 | Key | Meaning |
 |---|---|
+| `general.view` | `side` = you look through the side glass, the LEFT fan panels face you; `front` = through the front panel, the RIGHT panels face you (environment: `VIEW`) |
 | `fans` | Fans and cooler color, `[r, g, b]` 0..255 |
 | `gpu` | Graphics card color, `[r, g, b]` 0..255 |
 | `gpu_blink_hz` | Blinks per second, 0..4; `0` = steady light |
@@ -72,7 +74,7 @@ Stars and cats read their colors and the graphics card's blink rate from `~/.con
 - The effects check the file 4× per second and apply changes without a restart. Each applied change is logged, at most once a second: `Settings: fans #FF0000, GPU #0000FF 2 Hz hard` — watch it with `journalctl --user -f -u 'airglow-*'`.
 - A missing key falls back to the environment default (`COLOR`, `GPU_COLOR`, `GPU_BLINK_HZ`, `GPU_SMOOTH`); a broken file is ignored with one log line and the last good values stay.
 - The blink phase is integrated over time, so moving the frequency slider changes the speed without a jump.
-- The equalizer has no settings in the file: its colors follow the music.
+- The equalizer reads only `general.view`: its colors follow the music.
 
 After an image update that changes the host Python version, recreate the venv (first two lines).
 
@@ -98,6 +100,7 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 
 - Fixed color `0,255,94`; dim background `BASE=0.25`; stars rise fast and fade slowly (smoothstep envelope), lifetime 1.2–3.5 s, `DENSITY=0.12`.
 - `DARK` = share of LEDs whose background is off; dark gaps re-roll every ~`DARK_DRIFT=8` s and fade over `DARK_FADE=1` s. The service uses `DARK=0.15`.
+- **Cooler ring:** a black hole's accretion disk in the fan color (`COOLER=disk`, default; `COOLER=stars` gives it stars like the fans). A brighter side slowly swings round (relativistic beaming: gas moving towards you looks brighter), three hot clumps orbit faster with fading tails, flare up for a few turns and are replaced, and a slow turbulence ripples along the ring. The brightest spots shift towards white, like hotter gas. `DISK_SPEED=0.6` turns per second for the clumps (the bright side turns 5× slower), `DISK_DIR=-1` reverses the direction.
 - Graphics card: same green, smooth breathing at 0.5 Hz by default.
 - On exit: `ON_EXIT=static` (solid color on the case and the graphics card).
 
@@ -106,7 +109,7 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - 3-pixel-wide sprites on the 3×13 fan panels: `head` = `#.#/###/.#.` (default), `body` = `#.#/###/.#./###/#.#`, or a custom sprite.
 - Cats move top→bottom at `SPEED=3` rows/s with gaps of 2–6 rows; `SMOOTH=0` (crisp row jumps) by default.
 - The cooler ring shows a band that follows each cat (`COOLER=band`; ring y = sine of the LED angle, idx 0 = 3 o'clock, clockwise).
-- Panel mapping: the viewer-facing LEFT panel, outer column (2) is leftmost → `idx = (2 - col_from_left) * 13 + row`.
+- Panel mapping, `row` 0 = top and `col` 0 = leftmost as you see the panel: `view=side` (left panel faces you, outer column leftmost) → `idx = (2 - col) * 13 + row`; `view=front` (right panel, the same board turned 180°) → `idx = col * 13 + (12 - row)`. Either way the cats fall top→bottom on the panel you see.
 - Script default color is hot pink `255,16,120`; the service overrides it to green.
 - Graphics card: hot pink, hard on/off at 1 Hz by default.
 - `--preview` draws the panel and the GPU blink in the terminal without OpenRGB.
@@ -116,7 +119,7 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 
 - **Audio input:** the monitor of the default output through PipeWire (what you hear: Spotify, browser, games), no microphone. Uses `parec` if present, otherwise `pw-record` with `stream.capture.sink=true`. Mono s16le, 48 kHz.
 - **Analysis:** 2048-sample Hann-windowed FFT (numpy) → three bands `40–250 / 250–2000 / 2000–12000 Hz`; per-band auto-gain (`DYN=30` dB range, reference falls `AGC_FALL=4` dB/s), silence gate `GATE=-62` dBFS; bass beat detector (level jump over a slow average, 0.25 s cooldown).
-- **Fan panels:** three bars, left→right as seen on the viewer-facing panel: bass (outer), mid, treble (next to the propeller). Low part tinted per bar (emerald / green / lime), then a shared green → yellow → red meter gradient; white peak dots hold `PEAK_HOLD=0.45` s and fall. Fast attack, `RELEASE=16` rows/s.
+- **Fan panels:** three bars, left→right as seen on the viewer-facing panel: bass, mid, treble, growing upward (the same panel mapping as the cats, chosen by `view`). With `view=side` treble is the inner column, next to the propeller; with `view=front` bass is, so the petal LEDs (idx 0–7) share the bottom of the bass bar. Low part tinted per bar (emerald / green / lime), then a shared green → yellow → red meter gradient; white peak dots hold `PEAK_HOLD=0.45` s and fall. Fast attack, `RELEASE=16` rows/s.
 - **Petals:** a two-armed comet spinner; speed grows with loudness, gets a kick on every beat, flashes and moves to the next palette color (cyan → violet → magenta → blue). Because idx 0–7 are shared with the top of the treble bar, `PETALS=blend` (default) lets the comet head override the bar there; `PETALS=spinner` and `PETALS=eq` give the shared LEDs to one side only.
 - **Cooler ring:** `COOLER=spin` (default) runs the petals' spinner on the ring: same speed, beat kicks and colors, tail scaled to the 12 LEDs, heads pointing the same way as on the petals. `COOLER_ARMS=2` sets the number of comets, `COOLER_DIR=-1` reverses the direction. `COOLER=level` fills the ring from the bottom by overall loudness in the meter colors; `COOLER=pulse` pulses it with the bass in the spinner color.
 - **Graphics card:** a beat light. It flashes on every bass beat in the spinner's current color (so the color changes beat by beat), and between beats glows dimly with the bass. A beat write skips the `GPU_FPS` limit, so no flash is lost. `GPU=off` leaves the card alone.
@@ -127,7 +130,7 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 ### Known hardware effects
 
 - The 4 hub fans are wired in parallel → identical pattern on all of them.
-- The right panel is the same board rotated 180° → cats crawl up, upside down, there; equalizer bars grow from the top down, like a reflection.
+- The right panel is the same board rotated 180°. The effects draw for the panel you look at (`view`); on the other side of the fan, cats crawl up, upside down, and equalizer bars grow from the top down, like a reflection.
 - idx 0–7 also light the blade "petals" — the equalizer has to share them between the treble bar and the spinner.
 
 ## Measured load
