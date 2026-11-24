@@ -2,7 +2,16 @@
 Description=OpenRGB SDK server (localhost only)
 
 [Service]
+# `flatpak run` moves OpenRGB into its own cgroup scope, so systemd alone does not stop it:
+# a leftover instance keeps port 6742 and every new start fails. Clear it first ("-" = no
+# instance is fine) and stop it explicitly.
+ExecStartPre=-/usr/bin/flatpak kill org.openrgb.OpenRGB
+# OpenRGB looks for devices once, when it starts. Right after login the graphics card's I²C
+# buses (NVIDIA driver) or your access to them may not be ready yet, and the card would be
+# missing until OpenRGB restarts. Wait up to 30 s for a writable NVIDIA bus, then start anyway.
+ExecStartPre=/bin/sh -c 'for i in $$(seq 30); do for d in /sys/class/i2c-dev/*; do grep -qs NVIDIA "$$d/name" && test -w "/dev/$$(basename "$$d")" && exit 0; done; sleep 1; done; echo "No writable NVIDIA I2C bus after 30 s; starting OpenRGB anyway"'
 ExecStart=/usr/bin/flatpak run org.openrgb.OpenRGB --server --server-host 127.0.0.1
+ExecStop=-/usr/bin/flatpak kill org.openrgb.OpenRGB
 Restart=on-failure
 RestartSec=5
 

@@ -254,18 +254,33 @@ class GpuOut:
     """The graphics card as a separate OpenRGB device: Direct mode, one color for all its
     LEDs, at most GPU_FPS writes per second and only when the color changed."""
 
+    LOOK_EVERY, LOOK_FOR = 3.0, 120.0     # seconds: how often / how long to look for a missing card
+
     def __init__(self, enabled, fps):
         self.enabled, self.dt = enabled, 1.0 / max(1.0, fps)
         self.dev, self.last, self.next_t = None, None, 0.0
+        self.extra, self.look_until, self.next_look = None, 0.0, 0.0
+
+    @staticmethod
+    def _find(client):
+        return next((d for d in client.devices if d.type == DeviceType.GPU and d.leds), None)
 
     def attach(self, client):
+        self.close_extra()
         self.dev, self.last = None, None
         if not self.enabled:
             return
-        gpu = next((d for d in client.devices if d.type == DeviceType.GPU and d.leds), None)
+        gpu = self._find(client)
         if gpu is None:
-            print("No graphics card in OpenRGB; lighting the case only.", file=sys.stderr, flush=True)
+            self.look_until = time.monotonic() + self.LOOK_FOR
+            self.next_look = time.monotonic() + self.LOOK_EVERY
+            print("No graphics card in OpenRGB yet; lighting the case and looking again "
+                  f"for {self.LOOK_FOR:.0f} s.", file=sys.stderr, flush=True)
             return
+        self._drive(gpu)
+
+    def _drive(self, gpu):
+        """Direct mode on the card; True if it can be driven."""
         try:
             gpu.set_mode(direct_mode(gpu))
         except Exception as e:  # noqa: BLE001 — no Direct mode, or the card refused
@@ -276,8 +291,45 @@ class GpuOut:
                 f" colors={len(m.colors or [])} [{m.colors_min}..{m.colors_max}]")
             print(f"Cannot drive '{gpu.name}' ({e}{detail}); lighting the case only.",
                   file=sys.stderr, flush=True)
-            return
+            return False
         self.dev = gpu
+        return True
+
+    def look_again(self, now):
+        """OpenRGB scans for devices once, when it starts, and may list the card later than the
+        board — or not at all, if the card's I²C buses were not ready yet. While the card is
+        missing, ask again every few seconds for a while after each connect, over a second
+        connection that then drives the card, so the case animation is not interrupted."""
+        if not self.enabled or self.dev is not None or not self.next_look <= now < self.look_until:
+            return
+        self.next_look = now + self.LOOK_EVERY
+        try:
+            c = OpenRGBClient(E["OPENRGB_HOST"], int(E["OPENRGB_PORT"]), "airglow-gpu")
+        except Exception:  # noqa: BLE001 — OpenRGB busy or restarting: try again later
+            return
+        gpu = self._find(c)
+        if gpu is not None:
+            self.look_until = 0.0                 # found: stop looking, whatever _drive says
+            if self._drive(gpu):
+                self.extra = c
+                print(f"Found '{gpu.name}' in OpenRGB; driving it now.", flush=True)
+                return
+        try:
+            c.disconnect()
+        except Exception:  # noqa: BLE001
+            pass
+        if gpu is None and self.next_look >= self.look_until:
+            print("Still no graphics card in OpenRGB; lighting the case only. "
+                  "Restarting OpenRGB usually helps: systemctl --user restart openrgb.service",
+                  file=sys.stderr, flush=True)
+
+    def close_extra(self):
+        if self.extra is not None:
+            try:
+                self.extra.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            self.extra = None
 
     def push(self, color, now):
         if self.dev is None or now < self.next_t or color == self.last:
@@ -519,6 +571,7 @@ while running:
             dev.set_colors(frame, fast=True)
             last = frame
         gpu.push(blink.rgb(blink.level(dt)), now)
+        gpu.look_again(now)
     except (ConnectionError, OSError, BrokenPipeError) as e:
         print(f"OpenRGB connection lost ({e}); retrying in 3 s…", file=sys.stderr, flush=True)
         time.sleep(3)
@@ -542,6 +595,7 @@ try:
                         for z in dev.zones for _ in z.leds], fast=True)
         gpu.fill(blink.rgb(1.0) if ON_EXIT == "static" else off_c)
     client.disconnect()
+    gpu.close_extra()
 except Exception:
     pass
 print("Stopped.")
