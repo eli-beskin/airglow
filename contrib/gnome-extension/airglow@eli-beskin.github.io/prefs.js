@@ -4,8 +4,9 @@
 // What it sets:
 //   • which side of the case you look at (side glass or front panel), so the fan strip
 //     animations of cats and the equalizer face you;
-//   • per effect (stars, cats): fans + cooler color, graphics card color — a color wheel,
-//     brightness, R/G/B, HEX, presets — and how the graphics card blinks.
+//   • per effect (stars, cats, palms): fans + cooler color (palms: palm and sea colors),
+//     graphics card color — a color wheel, brightness, R/G/B, HEX, presets — and how the
+//     graphics card blinks.
 // The equalizer picks its colors from the music, so it only gets a short description.
 //
 // How it works
@@ -29,11 +30,18 @@ const CONFIG = GLib.build_filenamev([CONFIG_DIR, 'stopgap.json']);
 const SAVE_DELAY_MS = 150;
 const MAX_HZ = 4;
 
-// Must match the defaults in contrib/stopgap/airglow-{stars,cats,eq}.sh and their units.
+// Must match the defaults in contrib/stopgap/airglow-{stars,cats,palms,eq}.sh and their units.
 const DEFAULTS = {
     general: {view: 'side'},
     stars: {fans: [0, 255, 94], gpu: [0, 255, 94], gpu_blink_hz: 0.5, gpu_smooth: true},
     cats: {fans: [0, 255, 94], gpu: [255, 16, 120], gpu_blink_hz: 1, gpu_smooth: false},
+    palms: {fans: [0, 255, 94], sea: [0, 140, 255], gpu: [255, 110, 0], gpu_blink_hz: 0.2, gpu_smooth: true},
+};
+// Color rows of each effect group, top to bottom, with their labels (keys into T).
+const COLOR_ROWS = {
+    stars: [['fans', 'fans'], ['gpu', 'gpu']],
+    cats: [['fans', 'fans'], ['gpu', 'gpu']],
+    palms: [['fans', 'palm'], ['sea', 'sea'], ['gpu', 'sunset']],
 };
 const SECTIONS = Object.keys(DEFAULTS);
 const VIEWS = ['side', 'front'];
@@ -60,6 +68,11 @@ const STRINGS = {
         starsHint: 'Starry sky on the fans and the cooler; the graphics card blinks.',
         cats: 'Cats',
         catsHint: 'Falling cats on the fans; the graphics card blinks.',
+        palms: 'Palms',
+        palmsHint: 'Vacation: a palm sways in the wind over the sea, now and then a coconut falls; water rocks in the cooler, the graphics card glows like a sunset.',
+        palm: 'Palm (fans)',
+        sea: 'Sea (fans and cooler)',
+        sunset: 'Graphics card (sunset)',
         eq: 'Equalizer',
         eqHint: 'Colors follow the music — nothing to set here.',
         eqGpu: 'Flashes on every bass beat in the color of the blade spinner and glows dimly with the bass in between.',
@@ -89,6 +102,11 @@ const STRINGS = {
         starsHint: 'Звёздное небо на вентиляторах и кулере, видеокарта мигает.',
         cats: 'Котики',
         catsHint: 'Падающие котики на вентиляторах, видеокарта мигает.',
+        palms: 'Пальмы',
+        palmsHint: 'Отпуск: пальма качается на ветру над морем, иногда падает кокос; в кулере плещется вода, видеокарта светится как закат.',
+        palm: 'Пальма (вентиляторы)',
+        sea: 'Море (вентиляторы и кулер)',
+        sunset: 'Видеокарта (закат)',
         eq: 'Эквалайзер',
         eqHint: 'Цвета подстраиваются под музыку — настраивать нечего.',
         eqGpu: 'Вспыхивает на каждый удар баса цветом спиннера на лопастях, между ударами тускло светится в такт басу.',
@@ -155,7 +173,7 @@ function hsvToRgb(h, s, v) {
 
 // ---------- settings file ----------
 function sanitize(key, v) {
-    if (key === 'fans' || key === 'gpu') {
+    if (key === 'fans' || key === 'gpu' || key === 'sea') {
         return Array.isArray(v) && v.length === 3 &&
             v.every(c => Number.isInteger(c) && c >= 0 && c <= 255) ? [...v] : undefined;
     }
@@ -594,8 +612,8 @@ function effectGroup(store, fx) {
     const reset = new Gtk.Button({label: T.reset, valign: Gtk.Align.CENTER, css_classes: ['flat']});
     group.set_header_suffix(reset);
 
-    const fans = colorRow(T.fans, store.get(fx, 'fans'), c => store.set(fx, 'fans', c));
-    const gpu = colorRow(T.gpu, store.get(fx, 'gpu'), c => store.set(fx, 'gpu', c));
+    const colors = COLOR_ROWS[fx].map(([key, label]) =>
+        [key, colorRow(T[label], store.get(fx, key), c => store.set(fx, key, c))]);
     const smooth = new Adw.SwitchRow({
         title: T.smooth, subtitle: T.smoothHint, active: store.get(fx, 'gpu_smooth'),
     });
@@ -606,14 +624,14 @@ function effectGroup(store, fx) {
     smooth.sensitive = store.get(fx, 'gpu_blink_hz') > 0;
     smooth.connect('notify::active', () => store.set(fx, 'gpu_smooth', smooth.active));
 
-    for (const r of [fans.row, gpu.row, blink.row, smooth])
+    for (const r of [...colors.map(([, c]) => c.row), blink.row, smooth])
         group.add(r);
 
     reset.connect('clicked', () => {
         const d = DEFAULTS[fx];
         store.reset(fx);
-        fans.setRgb(d.fans);
-        gpu.setRgb(d.gpu);
+        for (const [key, c] of colors)
+            c.setRgb(d[key]);
         blink.set(d.gpu_blink_hz);
         smooth.active = d.gpu_smooth;
     });
@@ -673,6 +691,7 @@ export default class AirglowPreferences extends ExtensionPreferences {
         const groups = {
             stars: effectGroup(store, 'stars'),
             cats: effectGroup(store, 'cats'),
+            palms: effectGroup(store, 'palms'),
             eq: equalizerGroup(),
         };
         page.add(viewGroup(store));

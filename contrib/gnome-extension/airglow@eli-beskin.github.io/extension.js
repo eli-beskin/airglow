@@ -2,14 +2,14 @@
 //
 // What it does
 //   • the tile turns the lighting on (last used effect) or off;
-//   • the arrow opens a menu: Stars / Cats / Equalizer / Colors… / Turn off;
+//   • the arrow opens a menu: Stars / Cats / Palms / Equalizer / Colors… / Turn off;
 //   • "Colors…" opens the settings window (prefs.js): fan and GPU colors, GPU blinking.
 //
 // How it works
 //   • Switching runs ~/.local/bin/airglow-fx (contrib/stopgap), so the logic lives
 //     in one script and behaves the same from a terminal.
 //   • State is read from the systemd user manager over D-Bus (ActiveState/SubState
-//     of airglow-{stars,cats,eq}.service), so the tile also follows changes made
+//     of airglow-{stars,cats,palms,eq}.service), so the tile also follows changes made
 //     from a terminal or a crashed effect.
 //   • Later the same tile can talk to airglowd (io.github.eli_beskin.Airglow)
 //     instead of systemd.
@@ -23,7 +23,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import {QuickMenuToggle, SystemIndicator} from 'resource:///org/gnome/shell/ui/quickSettings.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const EFFECTS = ['stars', 'cats', 'eq'];
+const EFFECTS = ['stars', 'cats', 'palms', 'eq'];
 const RUNNING = new Set(['active', 'activating', 'reloading']);
 
 const SYSTEMD = 'org.freedesktop.systemd1';
@@ -38,6 +38,7 @@ const STRINGS = {
         title: 'Lighting',
         stars: 'Stars',
         cats: 'Cats',
+        palms: 'Palms',
         eq: 'Equalizer',
         off: 'Off',
         turnOff: 'Turn off',
@@ -52,6 +53,7 @@ const STRINGS = {
         title: 'Подсветка',
         stars: 'Звёзды',
         cats: 'Котики',
+        palms: 'Пальмы',
         eq: 'Эквалайзер',
         off: 'Выкл',
         turnOff: 'Выключить',

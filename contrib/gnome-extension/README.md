@@ -3,7 +3,7 @@
 A **Lighting** tile in GNOME's Quick Settings menu (top-right corner, next to Wi-Fi and Bluetooth) for the [stopgap effects](../stopgap/).
 
 - Click the tile: lighting on (the last used effect) / off (LEDs go black).
-- Click the arrow: pick **Stars**, **Cats** or **Equalizer**, open **Colors and blinking…**, or **Turn off**.
+- Click the arrow: pick **Stars**, **Cats**, **Palms** or **Equalizer**, open **Colors and blinking…**, or **Turn off**.
 - The subtitle shows what is running; "restarting — is OpenRGB running?" means the effect keeps failing to start.
 - Russian or English, following the system language.
 
@@ -15,9 +15,9 @@ It is a thin front end: switching runs `~/.local/bin/airglow-fx`, and the state 
 
 **View** — **I look at the case: from the side / from the front.** From the side you see the left panels of the fans through the glass, from the front the right ones, which are the same boards turned 180°. Cats and the equalizer draw for the panel you see, so cats fall down and bars grow up either way.
 
-Then a group for **Stars** and one for **Cats**:
+Then a group each for **Stars**, **Cats** and **Palms**:
 
-- **Fans and cooler** and **Graphics card** colors: a color wheel (hue around, saturation from the centre), a brightness slider, R / G / B fields, a HEX field (`#00FF5E` or `0, 255, 94`) and quick presets.
+- **Fans and cooler** and **Graphics card** colors (palms: **Palm**, **Sea** and **Graphics card (sunset)**): a color wheel (hue around, saturation from the centre), a brightness slider, R / G / B fields, a HEX field (`#00FF5E` or `0, 255, 94`) and quick presets.
 - **Graphics card blinking:** 0–4 blinks per second, 0 = steady light; **Smooth blinking** on = breathing, off = sharp flashes.
 - **Reset** returns a group to its defaults.
 - The top line and the group title show which effect is on the case right now (from `airglow-fx current`, re-checked every 2 s), so it is clear which group changes the lights.
@@ -63,4 +63,4 @@ journalctl --user -b -o cat /usr/bin/gnome-shell | grep -i airglow
 | `metadata.json` | UUID, name, supported GNOME Shell versions |
 | `extension.js` | The toggle: `QuickMenuToggle` + `SystemIndicator`, systemd state over D-Bus, runs `airglow-fx` |
 | `prefs.js` | Settings window: libadwaita page, a color wheel widget (`Gtk.Widget` drawing a pre-rendered texture), color rows, blink slider; reads and writes `stopgap.json` |
-| `icons/*.svg` | Symbolic icons: tile, stars, cats (the effect's own 3×3 head sprite), equalizer |
+| `icons/*.svg` | Symbolic icons: tile, stars, cats (the effect's own 3×3 head sprite), palms, equalizer |

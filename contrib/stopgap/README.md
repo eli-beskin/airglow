@@ -12,11 +12,13 @@ They are bash wrappers with an embedded Python loop, started by systemd user ser
 |---|---|---|
 | `airglow-stars.sh` | `~/.local/bin/` | "Starry sky" effect on the fans and the cooler; the graphics card blinks |
 | `airglow-cats.sh` | `~/.local/bin/` | "Falling cats" effect; the graphics card blinks |
+| `airglow-palms.sh` | `~/.local/bin/` | "Palm beach" (vacation) effect: a palm sways over the sea, water rocks in the cooler, the graphics card glows like a sunset |
 | `airglow-eq.sh` | `~/.local/bin/` | "Music equalizer" effect: system audio → bars, spinners on the petals and the cooler, beat light on the graphics card |
-| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| eq \| on \| off \| current \| status` |
+| `airglow-fx` | `~/.local/bin/` | Effect switcher: `airglow-fx stars \| cats \| palms \| eq \| on \| off \| current \| status` |
 | `openrgb.service` | `~/.config/systemd/user/` | OpenRGB SDK server, localhost only; waits for the graphics card's I²C buses at login and stops the Flatpak app for real |
 | `airglow-stars.service` | `~/.config/systemd/user/` | Stars effect, `DARK=0.15` |
 | `airglow-cats.service` | `~/.config/systemd/user/` | Cats effect, green `COLOR=0,255,94`, `Conflicts=airglow-stars.service` |
+| `airglow-palms.service` | `~/.config/systemd/user/` | Palms effect, `Conflicts=` with stars, cats and the equalizer |
 | `airglow-eq.service` | `~/.config/systemd/user/` | Equalizer effect, `Conflicts=` with stars and cats |
 
 Runtime: a Python venv in `~/.local/share/airglow/venv` with `openrgb-python==0.3.8` and `numpy` (same path as architecture §10). `numpy` is needed only by the equalizer (FFT).
@@ -30,9 +32,9 @@ python3 -m venv ~/.local/share/airglow/venv
 ~/.local/share/airglow/venv/bin/pip install openrgb-python==0.3.8 numpy
 
 mkdir -p ~/.local/bin ~/.config/systemd/user
-cp airglow-stars.sh airglow-cats.sh airglow-eq.sh airglow-fx ~/.local/bin/
-chmod +x ~/.local/bin/airglow-{stars.sh,cats.sh,eq.sh,fx}
-cp openrgb.service airglow-stars.service airglow-cats.service airglow-eq.service ~/.config/systemd/user/
+cp airglow-stars.sh airglow-cats.sh airglow-palms.sh airglow-eq.sh airglow-fx ~/.local/bin/
+chmod +x ~/.local/bin/airglow-{stars.sh,cats.sh,palms.sh,eq.sh,fx}
+cp openrgb.service airglow-stars.service airglow-cats.service airglow-palms.service airglow-eq.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now openrgb.service
 airglow-fx stars
@@ -53,20 +55,22 @@ For a switch in GNOME's Quick Settings menu and a settings window for colors, se
 
 ## Live settings: view, colors and GPU blinking
 
-The effects read their live settings from `~/.config/airglow/stopgap.json` (`$AIRGLOW_CONFIG` overrides the path): which side of the case you look at (cats and the equalizer), and the colors and the graphics card's blink rate (stars and cats). The GNOME extension's settings window writes this file; it can also be edited by hand:
+The effects read their live settings from `~/.config/airglow/stopgap.json` (`$AIRGLOW_CONFIG` overrides the path): which side of the case you look at (cats and the equalizer), and the colors and the graphics card's blink rate (stars, cats and palms). The GNOME extension's settings window writes this file; it can also be edited by hand:
 
 ```json
 {
   "general": {"view": "side"},
   "stars": {"fans": [0, 255, 94], "gpu": [0, 255, 94],  "gpu_blink_hz": 0.5, "gpu_smooth": true},
-  "cats":  {"fans": [0, 255, 94], "gpu": [255, 16, 120], "gpu_blink_hz": 1,   "gpu_smooth": false}
+  "cats":  {"fans": [0, 255, 94], "gpu": [255, 16, 120], "gpu_blink_hz": 1,   "gpu_smooth": false},
+  "palms": {"fans": [0, 255, 94], "sea": [0, 140, 255], "gpu": [255, 110, 0], "gpu_blink_hz": 0.2, "gpu_smooth": true}
 }
 ```
 
 | Key | Meaning |
 |---|---|
 | `general.view` | `side` = you look through the side glass, the LEFT fan panels face you; `front` = through the front panel, the RIGHT panels face you (environment: `VIEW`) |
-| `fans` | Fans and cooler color, `[r, g, b]` 0..255 |
+| `fans` | Fans and cooler color, `[r, g, b]` 0..255; for palms: the palm |
+| `sea` | Palms only: the sea on the fans and the water in the cooler (environment: `SEA_COLOR`) |
 | `gpu` | Graphics card color, `[r, g, b]` 0..255 |
 | `gpu_blink_hz` | Blinks per second, 0..4; `0` = steady light |
 | `gpu_smooth` | `true` = smooth breathing, `false` = hard on/off |
@@ -114,6 +118,19 @@ Device and zones as reported by OpenRGB 1.1 (`--list`):
 - Script default color is hot pink `255,16,120`; the service overrides it to green.
 - Graphics card: hot pink, hard on/off at 1 Hz by default.
 - `--preview` draws the panel and the GPU blink in the terminal without OpenRGB.
+- On exit: `ON_EXIT=off`.
+
+### Palms (`airglow-palms.sh`)
+
+- A palm on the 3×13 fan panel: trunk from row 10 up to row 4 in the middle column, a crown of five fronds (two long hanging ones, two short ones reaching up, a young leaf in the middle). Every point is drawn with sub-pixel precision (spread over the 2×2 nearest LEDs), so the palm sways smoothly instead of jumping whole columns.
+- Wind: two slow sines (`WIND=0.45` columns at the crown) plus gusts every `GUST_MIN=7`…`GUST_MAX=16` s (`GUST=0.5`). The trunk bends more towards the top, the leaves blow downwind, the windward fronds lift, and the tips flutter (`FLUTTER=0.35` rows), harder in a gust. `BEND=0.25` is the trunk's own curve.
+- The trunk is dimmer than the crown (`TRUNK=0.7`), with rings: every few half-rows a little darker.
+- Sea: the bottom two rows in the sea color. Waves roll left → right (`WAVE_HZ=0.35`); the upper row shows only the crests; sun glints flash on the water (`GLINTS=0.6` per second); the trunk stands in front of the water.
+- Coconut: every `COCONUT_MIN=25`…`COCONUT_MAX=60` s one hangs under the crown, shakes, falls with gravity and splashes — a ring of spray runs along the sea rows. `COCONUT=off` turns it off.
+- Cooler ring: `COOLER=sea` (default) is a porthole: sea water in the lower half, its surface bobbing with the waves and tilting with the wind, bright foam along the surface. `COOLER=sun` shows slowly turning rays in the graphics card color, `COOLER=off` keeps it black.
+- Graphics card: sunset orange, slow smooth breathing at 0.2 Hz by default.
+- Uses the same panel mapping and `view` as the cats, so the palm stands upright on the panel you see. idx 0–7 also light the petals with whatever the inner column shows.
+- `--preview` draws the panel, the cooler ring and the graphics card in the terminal (truecolor), no OpenRGB needed.
 - On exit: `ON_EXIT=off`.
 
 ### Equalizer (`airglow-eq.sh`)

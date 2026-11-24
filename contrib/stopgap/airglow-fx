@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # airglow-fx — switch the stopgap lighting effect.
 #
-#   airglow-fx stars | cats | eq   switch to an effect (stays after the next login)
+#   airglow-fx stars | cats | palms | eq   switch to an effect (stays after the next login)
 #   airglow-fx on                  turn on the last used effect (stars the first time)
 #   airglow-fx off                 turn the lighting off and black (stays after the next login)
 #   airglow-fx current             print the running effect, or "off"
@@ -10,7 +10,7 @@
 # The GNOME Quick Settings toggle (contrib/gnome-extension) calls this script,
 # so the switching logic lives in one place and works the same from a terminal.
 set -euo pipefail
-EFFECTS=(stars cats eq)
+EFFECTS=(stars cats palms eq)
 
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/airglow"
 LAST_FILE="$STATE_DIR/last-effect"
@@ -67,7 +67,7 @@ turn_off() {
 }
 
 case "${1:-status}" in
-    stars|cats|eq)
+    stars|cats|palms|eq)
         switch_to "$1"
         ;;
     on)
@@ -87,7 +87,7 @@ case "${1:-status}" in
         done
         ;;
     *)
-        echo "Usage: airglow-fx stars | cats | eq | on | off | current | status" >&2
+        echo "Usage: airglow-fx stars | cats | palms | eq | on | off | current | status" >&2
         exit 1
         ;;
 esac
