@@ -6,7 +6,7 @@
 # ring is a porthole with sea water rocking in it (or the sun). The graphics card glows
 # like a sunset.
 #
-# Colors and the GPU blink rate are read live from ~/.config/airglow/stopgap.json
+# Colors are read live from ~/.config/airglow/stopgap.json
 # (section "palms"), which the GNOME extension's settings window writes. Without that
 # file the settings below are used.
 #
@@ -27,8 +27,6 @@ set -euo pipefail
 : "${SEA_COLOR:=0,140,255}"   # sea R,G,B, blue                   (stopgap.json: "sea")
 : "${GPU:=on}"                # on = also drive the graphics card | off = leave it alone
 : "${GPU_COLOR:=255,110,0}"   # GPU R,G,B, sunset orange          (stopgap.json: "gpu")
-: "${GPU_BLINK_HZ:=0.2}"      # GPU blinks per second, 0 = steady (stopgap.json: "gpu_blink_hz")
-: "${GPU_SMOOTH:=1}"          # 1 = smooth breathing, 0 = hard on/off (stopgap.json: "gpu_smooth")
 : "${GPU_FPS:=12}"            # max GPU updates per second (it sits on a slow I²C bus)
 : "${AIRGLOW_CONFIG:=${XDG_CONFIG_HOME:-$HOME/.config}/airglow/stopgap.json}"
 : "${WIND:=0.45}"             # how far the crown sways, in panel columns (0 = calm)
@@ -91,7 +89,7 @@ if [[ "$MODE" != "--preview" ]] && ! (exec 3<>"/dev/tcp/$OPENRGB_HOST/$OPENRGB_P
     exit 1
 fi
 
-export COLOR SEA_COLOR GPU GPU_COLOR GPU_BLINK_HZ GPU_SMOOTH GPU_FPS AIRGLOW_CONFIG VIEW \
+export COLOR SEA_COLOR GPU GPU_COLOR GPU_FPS AIRGLOW_CONFIG VIEW \
        WIND GUST GUST_MIN GUST_MAX FLUTTER BEND TRUNK SEA_BASE SEA_AMP WAVE_HZ GLINTS \
        COCONUT COCONUT_MIN COCONUT_MAX COOLER PEAK FPS GAMMA ON_EXIT \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
@@ -124,9 +122,8 @@ HUB, COOL = E["HUB_ZONE"], E["COOLER_ZONE"]
 ROWS, COLS = 13, 3
 
 
-# ---------- live settings: colors and GPU blink (written by the GNOME extension) ----------
+# ---------- live settings: colors (written by the GNOME extension) ----------
 SECTION = "palms"
-MAX_HZ = 4.0
 
 
 def rgb3(v, fallback):
@@ -147,13 +144,6 @@ def num(v, lo, hi, fallback):
         return fallback
     return max(lo, min(hi, x)) if math.isfinite(x) else fallback
 
-
-def flag(v, fallback):
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str) and v.strip() in ("0", "1"):
-        return v.strip() == "1"
-    return fallback
 
 
 class LiveConfig:
@@ -191,26 +181,19 @@ class LiveConfig:
         return True
 
 
-class Blinker:
-    """GPU light that blinks at a set rate. The phase is integrated over time, so moving
-    the frequency slider changes the speed without a jump."""
+class GpuLight:
+    """The graphics card's light: one steady color, no blinking. Every write to the card goes
+    over its I²C bus inside the NVIDIA driver; on the reference machine that cost ~30 ms of
+    CPU per write and made GNOME drop frames while blinking (12 writes/s). So the card is
+    written only when its color changes."""
 
     def __init__(self):
-        self.phase, self.hz, self.smooth = 0.0, 0.0, True
         self.color = (0, 0, 0)
 
-    def configure(self, color, hz, smooth):
-        self.color, self.hz, self.smooth = color, hz, smooth
+    def configure(self, color):
+        self.color = color
 
-    def level(self, dt):
-        if self.hz <= 0:
-            return 1.0                                     # 0 Hz = steady light
-        self.phase = (self.phase + self.hz * dt) % 1.0
-        if not self.smooth:
-            return 1.0 if self.phase < 0.5 else 0.0        # hard on/off
-        return 0.5 - 0.5 * math.cos(2 * math.pi * self.phase)   # smooth breathing
-
-    def rgb(self, level):
+    def rgb(self, level=1.0):
         k = max(0.0, min(1.0, level)) ** GAMMA
         return RGBColor(*(round(c * k) for c in self.color))
 
@@ -348,11 +331,10 @@ class GpuOut:
 
 
 cfg = LiveConfig(os.path.expanduser(E["AIRGLOW_CONFIG"]), SECTION, {
-    "fans": E["COLOR"], "sea": E["SEA_COLOR"], "gpu": E["GPU_COLOR"],
-    "gpu_blink_hz": E["GPU_BLINK_HZ"], "gpu_smooth": E["GPU_SMOOTH"]})
+    "fans": E["COLOR"], "sea": E["SEA_COLOR"], "gpu": E["GPU_COLOR"]})
 FAN = rgb3(E["COLOR"], (0, 255, 94))
 SEA = rgb3(E["SEA_COLOR"], (0, 140, 255))
-blink = Blinker()
+gpu_light = GpuLight()
 gpu = GpuOut(E["GPU"] == "on", float(E["GPU_FPS"]))
 
 
@@ -361,15 +343,12 @@ def apply_config():
     v, d = cfg.values, cfg.defaults
     FAN = rgb3(v["fans"], rgb3(d["fans"], FAN))
     SEA = rgb3(v["sea"], rgb3(d["sea"], SEA))
-    blink.configure(rgb3(v["gpu"], rgb3(d["gpu"], FAN)),
-                    num(v["gpu_blink_hz"], 0.0, MAX_HZ, num(d["gpu_blink_hz"], 0.0, MAX_HZ, 0.0)),
-                    flag(v["gpu_smooth"], flag(d["gpu_smooth"], True)))
+    gpu_light.configure(rgb3(v["gpu"], rgb3(d["gpu"], FAN)))
 
 
 def settings_line():
     hx = lambda c: "#%02X%02X%02X" % tuple(c)
-    rate = "steady" if blink.hz <= 0 else f"{blink.hz:g} Hz {'smooth' if blink.smooth else 'hard'}"
-    return f"Settings: palm {hx(FAN)}, sea {hx(SEA)}, GPU {hx(blink.color)} {rate}"
+    return f"Settings: palm {hx(FAN)}, sea {hx(SEA)}, GPU {hx(gpu_light.color)}"
 
 
 cfg.poll(0.0)
@@ -398,7 +377,7 @@ def mix(palm, sea, sun=0.0):
     kp = max(0.0, min(1.0, palm)) ** GAMMA
     ks = max(0.0, min(1.0, sea)) ** GAMMA
     ku = max(0.0, min(1.0, sun)) ** GAMMA
-    sc = blink.color
+    sc = gpu_light.color
     return RGBColor(*(min(255, round(FAN[i] * kp + SEA[i] * ks + sc[i] * ku)) for i in range(3)))
 
 
@@ -646,8 +625,8 @@ if MODE == "--preview":
                 lines.append("    |" + "".join(term(hub[panel_index(r, c)]) for c in range(COLS)) + "|")
             ring = cooler_colors()
             lines += ["", "  cooler 3→ " + " ".join(term(c, "●") for c in ring)]
-            g = blink.rgb(blink.level(DT))
-            rate = "steady" if blink.hz <= 0 else f"{blink.hz:.1f} Hz {'smooth' if blink.smooth else 'hard'}"
+            g = gpu_light.rgb()
+            rate = "steady"
             lines += [f"  GPU       {term(g, '██████')}  {rate}",
                       f"  wind {beach.lean:+.2f}  gust {beach.gust:.2f}"
                       + ("  coconut!" if beach.coconut or beach.splash else "")]
@@ -729,7 +708,7 @@ while running:
         last_wall = wall
         now = time.monotonic()
         dt, prev = min(0.1, now - prev), now
-        if cfg.poll(now):                     # colors or blink rate changed in the settings
+        if cfg.poll(now):                     # colors changed in the settings
             apply_config()
             log_due = True
         if view_cfg.poll(now):                # turned to the other side of the case
@@ -743,7 +722,7 @@ while running:
         if frame != last:
             dev.set_colors(frame, fast=True)
             last = frame
-        gpu.push(blink.rgb(blink.level(dt)), now)
+        gpu.push(gpu_light.rgb(), now)
         gpu.look_again(now)
     except (ConnectionError, OSError, BrokenPipeError) as e:
         print(f"OpenRGB connection lost ({e}); retrying in 3 s…", file=sys.stderr, flush=True)
@@ -766,7 +745,7 @@ try:
         fill = mix(1.0, 0.0) if ON_EXIT == "static" else off_c
         dev.set_colors([fill if z.name in (HUB, COOL) else off_c
                         for z in dev.zones for _ in z.leds], fast=True)
-        gpu.fill(blink.rgb(1.0) if ON_EXIT == "static" else off_c)
+        gpu.fill(gpu_light.rgb(1.0) if ON_EXIT == "static" else off_c)
     client.disconnect()
     gpu.close_extra()
 except Exception:

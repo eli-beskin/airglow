@@ -3,7 +3,7 @@
 // What it does
 //   • the tile turns the lighting on (last used effect) or off;
 //   • the arrow opens a menu: Stars / Cats / Palms / Equalizer / Colors… / Turn off;
-//   • "Colors…" opens the settings window (prefs.js): fan and GPU colors, GPU blinking.
+//   • "Colors…" opens the settings window (prefs.js): fan and GPU colors.
 //
 // How it works
 //   • Switching runs ~/.local/bin/airglow-fx (contrib/stopgap), so the logic lives
@@ -42,7 +42,7 @@ const STRINGS = {
         eq: 'Equalizer',
         off: 'Off',
         turnOff: 'Turn off',
-        settings: 'Colors and blinking…',
+        settings: 'Colors…',
         starting: 'starting…',
         restarting: 'restarting — is OpenRGB running?',
         failed: 'Error',
@@ -57,7 +57,7 @@ const STRINGS = {
         eq: 'Эквалайзер',
         off: 'Выкл',
         turnOff: 'Выключить',
-        settings: 'Цвета и мигание…',
+        settings: 'Цвета…',
         starting: 'запуск…',
         restarting: 'перезапуск — OpenRGB запущен?',
         failed: 'Ошибка',

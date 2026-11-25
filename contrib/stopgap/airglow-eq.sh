@@ -7,8 +7,8 @@
 #   • blade petals:   a two-armed spinner that speeds up with the music and kicks on beats,
 #                     changing color on every beat
 #   • cooler ring:    the same spinner as the petals, scaled to the ring and in step with them
-#   • graphics card:  a beat light — flashes on every bass beat in the spinner's color,
-#                     a dim glow with the bass in between
+#   • graphics card:  a steady light in the spinner's first color (no flashing: every
+#                     write to the card makes GNOME drop frames, see GpuLight in the stars)
 #
 # Usage:
 #   ./airglow-eq.sh                         run the effect (Ctrl+C to stop)
@@ -54,8 +54,9 @@ set -euo pipefail
                               # | pulse = ring pulses with the bass | off
 : "${COOLER_ARMS:=2}"         # spin: arms on the ring
 : "${COOLER_DIR:=1}"          # spin: 1 = clockwise (same index direction as the petals), -1 = reverse
-: "${GPU:=beat}"              # beat = graphics card flashes on beats | off = leave it alone
-: "${GPU_FPS:=12}"            # max GPU updates per second (it sits on a slow I²C bus); beats skip the limit
+: "${GPU:=static}"            # static = graphics card glows steadily in GPU_COLOR | off = leave it alone
+: "${GPU_COLOR:=0,200,255}"   # R,G,B — the spinner's first color
+: "${GPU_FPS:=12}"            # max GPU updates per second (it sits on a slow I²C bus)
 : "${BRIGHT:=1.0}"            # global brightness 0..1
 : "${FPS:=30}"
 : "${GAMMA:=2.2}"
@@ -103,7 +104,7 @@ fi
 
 export VIEW AIRGLOW_CONFIG SOURCE BANDS DYN GAIN AGC_FALL GATE ATTACK RELEASE PEAK_HOLD PEAK_FALL SMOOTH \
        COLUMN_COLORS YELLOW RED PEAK_COLOR PALETTE PETALS BLEND ARMS TAIL \
-       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR GPU GPU_FPS BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
+       SPIN_BASE SPIN_GAIN KICK COOLER COOLER_ARMS COOLER_DIR GPU GPU_COLOR GPU_FPS BRIGHT FPS GAMMA ON_EXIT PW_LATENCY \
        DEVICE_MATCH COOLER_ZONE COOLER_LEDS HUB_ZONE HUB_LEDS EMPTY_ZONE \
        OPENRGB_HOST OPENRGB_PORT OFF_FLAG
 export AIRGLOW_MODE="$MODE"
@@ -469,11 +470,12 @@ def cooler_pixels(n, lv, loud, sp):
 GPU_MODE = E["GPU"]
 
 
+GPU_RGB = rgb(E["GPU_COLOR"])
+
+
 def gpu_pixel(lv, sp):
-    """Beat light: a flash in the spinner's color on every beat, a dim bass glow in between."""
-    if GPU_MODE != "beat":
-        return BLACK
-    return (sp.color(), min(1.0, 0.2 + 0.35 * lv[0] + 0.9 * sp.flash))
+    """A steady light: the card is written only when this changes, i.e. once."""
+    return (GPU_RGB, 1.0) if GPU_MODE == "static" else BLACK
 
 
 src = make_source()
@@ -590,8 +592,7 @@ def direct_mode(dev):
 
 class GpuOut:
     """The graphics card as a separate OpenRGB device: Direct mode, one color for all its
-    LEDs, at most GPU_FPS writes per second and only when the color changed. An urgent
-    write (a beat) skips the rate limit, so no flash is lost."""
+    LEDs, at most GPU_FPS writes per second and only when the color changed."""
 
     LOOK_EVERY, LOOK_FOR = 3.0, 120.0     # seconds: how often / how long to look for a missing card
 
@@ -670,8 +671,8 @@ class GpuOut:
                 pass
             self.extra = None
 
-    def push(self, color, now, urgent=False):
-        if self.dev is None or color == self.last or (now < self.next_t and not urgent):
+    def push(self, color, now):
+        if self.dev is None or color == self.last or now < self.next_t:
             return
         self.dev.set_colors([color] * len(self.dev.leds), fast=True)
         self.last, self.next_t = color, now + self.dt
@@ -681,7 +682,7 @@ class GpuOut:
             self.dev.set_colors([color] * len(self.dev.leds), fast=True)
 
 
-gpu = GpuOut(GPU_MODE == "beat", float(E["GPU_FPS"]))
+gpu = GpuOut(GPU_MODE == "static", float(E["GPU_FPS"]))
 
 
 def connect():
@@ -762,7 +763,7 @@ while running:
         if frame != last:
             dev.set_colors(frame, fast=True)
             last = frame
-        gpu.push(led(gpu_pixel(state["lv"], sp)), now, urgent=sp.flash > 0.95)
+        gpu.push(led(gpu_pixel(state["lv"], sp)), now)
         gpu.look_again(now)
     except (ConnectionError, OSError, BrokenPipeError) as e:
         print(f"OpenRGB connection lost ({e}); retrying in 3 s…", file=sys.stderr, flush=True)

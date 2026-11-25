@@ -3,7 +3,7 @@
 A **Lighting** tile in GNOME's Quick Settings menu (top-right corner, next to Wi-Fi and Bluetooth) for the [stopgap effects](../stopgap/).
 
 - Click the tile: lighting on (the last used effect) / off (LEDs go black).
-- Click the arrow: pick **Stars**, **Cats**, **Palms** or **Equalizer**, open **Colors and blinking…**, or **Turn off**.
+- Click the arrow: pick **Stars**, **Cats**, **Palms** or **Equalizer**, open **Colors…**, or **Turn off**.
 - The subtitle shows what is running; "restarting — is OpenRGB running?" means the effect keeps failing to start.
 - Russian or English, following the system language.
 
@@ -11,20 +11,20 @@ It is a thin front end: switching runs `~/.local/bin/airglow-fx`, and the state 
 
 ## Settings window
 
-**Colors and blinking…** in the menu (or the gear in the Extensions app) opens the settings window.
+**Colors…** in the menu (or the gear in the Extensions app) opens the settings window.
 
 **View** — **I look at the case: from the side / from the front.** From the side you see the left panels of the fans through the glass, from the front the right ones, which are the same boards turned 180°. Cats and the equalizer draw for the panel you see, so cats fall down and bars grow up either way.
 
 Then a group each for **Stars**, **Cats** and **Palms**:
 
 - **Fans and cooler** and **Graphics card** colors (palms: **Palm**, **Sea** and **Graphics card (sunset)**): a color wheel (hue around, saturation from the centre), a brightness slider, R / G / B fields, a HEX field (`#00FF5E` or `0, 255, 94`) and quick presets.
-- **Graphics card blinking:** 0–4 blinks per second, 0 = steady light; **Smooth blinking** on = breathing, off = sharp flashes.
+- The graphics card glows steadily in its color. There is no blinking: every write to the card made GNOME drop frames (details in [../stopgap/README.md](../stopgap/README.md#how-the-scripts-work)).
 - **Reset** returns a group to its defaults.
 - The top line and the group title show which effect is on the case right now (from `airglow-fx current`, re-checked every 2 s), so it is clear which group changes the lights.
 
 The **Equalizer** group only describes what the graphics card does: its colors follow the music.
 
-The window writes `~/.config/airglow/stopgap.json` about 0.15 s after each change, and the running effect re-reads it within a quarter of a second, so the case changes while you drag. Keys the window does not know about are kept. The file format is described in [../stopgap/README.md](../stopgap/README.md#live-settings-view-colors-and-gpu-blinking).
+The window writes `~/.config/airglow/stopgap.json` about 0.15 s after each change, and the running effect re-reads it within a quarter of a second, so the case changes while you drag. Keys the window does not know about are kept. The file format is described in [../stopgap/README.md](../stopgap/README.md#live-settings-view-and-colors).
 
 Tested against the GNOME Shell 50 API (Borshevik / Fedora 44); `metadata.json` also allows 48 and 49.
 
@@ -62,5 +62,5 @@ journalctl --user -b -o cat /usr/bin/gnome-shell | grep -i airglow
 |---|---|
 | `metadata.json` | UUID, name, supported GNOME Shell versions |
 | `extension.js` | The toggle: `QuickMenuToggle` + `SystemIndicator`, systemd state over D-Bus, runs `airglow-fx` |
-| `prefs.js` | Settings window: libadwaita page, a color wheel widget (`Gtk.Widget` drawing a pre-rendered texture), color rows, blink slider; reads and writes `stopgap.json` |
+| `prefs.js` | Settings window: libadwaita page, a color wheel widget (`Gtk.Widget` drawing a pre-rendered texture), color rows; reads and writes `stopgap.json` |
 | `icons/*.svg` | Symbolic icons: tile, stars, cats (the effect's own 3×3 head sprite), palms, equalizer |
