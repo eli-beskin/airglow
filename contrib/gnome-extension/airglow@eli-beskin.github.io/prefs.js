@@ -5,8 +5,8 @@
 //   • which side of the case you look at (side glass or front panel), so the fan strip
 //     animations of cats and the equalizer face you;
 //   • per effect (stars, cats, palms): fans + cooler color (palms: palm and sea colors),
-//     graphics card color — a color wheel, brightness, R/G/B, HEX, presets — and how the
-//     graphics card blinks.
+//     graphics card color — a color wheel, brightness, R/G/B, HEX, presets. The graphics
+//     card glows steadily: blinking it made GNOME drop frames (see the stopgap README).
 // The equalizer picks its colors from the music, so it only gets a short description.
 //
 // How it works
@@ -28,14 +28,13 @@ import {ExtensionPreferences} from 'resource:///org/gnome/Shell/Extensions/js/ex
 const CONFIG_DIR = GLib.build_filenamev([GLib.get_user_config_dir(), 'airglow']);
 const CONFIG = GLib.build_filenamev([CONFIG_DIR, 'stopgap.json']);
 const SAVE_DELAY_MS = 150;
-const MAX_HZ = 4;
 
 // Must match the defaults in contrib/stopgap/airglow-{stars,cats,palms,eq}.sh and their units.
 const DEFAULTS = {
     general: {view: 'side'},
-    stars: {fans: [0, 255, 94], gpu: [0, 255, 94], gpu_blink_hz: 0.5, gpu_smooth: true},
-    cats: {fans: [0, 255, 94], gpu: [255, 16, 120], gpu_blink_hz: 1, gpu_smooth: false},
-    palms: {fans: [0, 255, 94], sea: [0, 140, 255], gpu: [255, 110, 0], gpu_blink_hz: 0.2, gpu_smooth: true},
+    stars: {fans: [0, 255, 94], gpu: [0, 255, 94]},
+    cats: {fans: [0, 255, 94], gpu: [255, 16, 120]},
+    palms: {fans: [0, 255, 94], sea: [0, 140, 255], gpu: [255, 110, 0]},
 };
 // Color rows of each effect group, top to bottom, with their labels (keys into T).
 const COLOR_ROWS = {
@@ -44,6 +43,8 @@ const COLOR_ROWS = {
     palms: [['fans', 'palm'], ['sea', 'sea'], ['gpu', 'sunset']],
 };
 const SECTIONS = Object.keys(DEFAULTS);
+// GPU blinking was removed; its old keys are dropped when saving.
+const RETIRED_KEYS = ['gpu_blink_hz', 'gpu_smooth'];
 const VIEWS = ['side', 'front'];
 
 const PRESETS = [
@@ -65,9 +66,9 @@ const STRINGS = {
         viewSide: 'From the side',
         viewFront: 'From the front',
         stars: 'Stars',
-        starsHint: 'Starry sky on the fans and the cooler; the graphics card blinks.',
+        starsHint: 'Starry sky on the fans and the cooler; the graphics card glows in its own color.',
         cats: 'Cats',
-        catsHint: 'Falling cats on the fans; the graphics card blinks.',
+        catsHint: 'Falling cats on the fans; the graphics card glows in its own color.',
         palms: 'Palms',
         palmsHint: 'Vacation: a palm sways in the wind over the sea, now and then a coconut falls; water rocks in the cooler, the graphics card glows like a sunset.',
         palm: 'Palm (fans)',
@@ -75,14 +76,9 @@ const STRINGS = {
         sunset: 'Graphics card (sunset)',
         eq: 'Equalizer',
         eqHint: 'Colors follow the music — nothing to set here.',
-        eqGpu: 'Flashes on every bass beat in the color of the blade spinner and glows dimly with the bass in between.',
+        eqGpu: 'Glows steadily in light blue, the first color of the blade spinner.',
         fans: 'Fans and cooler',
         gpu: 'Graphics card',
-        blink: 'Graphics card blinking',
-        steady: 'Steady — no blinking',
-        perSecond: 'blinks per second',
-        smooth: 'Smooth blinking',
-        smoothHint: 'Off: sharp on/off flashes',
         reset: 'Reset',
         pick: 'Pick a color',
         brightness: 'Brightness',
@@ -99,9 +95,9 @@ const STRINGS = {
         viewSide: 'Сбоку',
         viewFront: 'Спереди',
         stars: 'Звёзды',
-        starsHint: 'Звёздное небо на вентиляторах и кулере, видеокарта мигает.',
+        starsHint: 'Звёздное небо на вентиляторах и кулере, видеокарта светится своим цветом.',
         cats: 'Котики',
-        catsHint: 'Падающие котики на вентиляторах, видеокарта мигает.',
+        catsHint: 'Падающие котики на вентиляторах, видеокарта светится своим цветом.',
         palms: 'Пальмы',
         palmsHint: 'Отпуск: пальма качается на ветру над морем, иногда падает кокос; в кулере плещется вода, видеокарта светится как закат.',
         palm: 'Пальма (вентиляторы)',
@@ -109,14 +105,9 @@ const STRINGS = {
         sunset: 'Видеокарта (закат)',
         eq: 'Эквалайзер',
         eqHint: 'Цвета подстраиваются под музыку — настраивать нечего.',
-        eqGpu: 'Вспыхивает на каждый удар баса цветом спиннера на лопастях, между ударами тускло светится в такт басу.',
+        eqGpu: 'Светится ровным голубым — первым цветом спиннера на лопастях.',
         fans: 'Вентиляторы и кулер',
         gpu: 'Видеокарта',
-        blink: 'Мигание видеокарты',
-        steady: 'Не мигает — горит ровно',
-        perSecond: 'вспышек в секунду',
-        smooth: 'Плавное мигание',
-        smoothHint: 'Выключено — резкие вспышки',
         reset: 'Сбросить',
         pick: 'Выбрать цвет',
         brightness: 'Яркость',
@@ -127,7 +118,6 @@ const T = RU ? STRINGS.ru : STRINGS.en;
 
 const clone = v => JSON.parse(JSON.stringify(v));
 const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v);
-const fmtNumber = v => (RU ? v.toFixed(1).replace('.', ',') : v.toFixed(1));
 
 // ---------- colors ----------
 function hex(rgb) {
@@ -177,12 +167,6 @@ function sanitize(key, v) {
         return Array.isArray(v) && v.length === 3 &&
             v.every(c => Number.isInteger(c) && c >= 0 && c <= 255) ? [...v] : undefined;
     }
-    if (key === 'gpu_blink_hz') {
-        return typeof v === 'number' && Number.isFinite(v)
-            ? Math.round(Math.min(MAX_HZ, Math.max(0, v)) * 10) / 10 : undefined;
-    }
-    if (key === 'gpu_smooth')
-        return typeof v === 'boolean' ? v : undefined;
     if (key === 'view')
         return VIEWS.includes(v) ? v : undefined;
     return undefined;
@@ -259,8 +243,11 @@ class Store {
 
     _save() {
         const out = {...this._raw};
-        for (const fx of SECTIONS)
+        for (const fx of SECTIONS) {
             out[fx] = {...(isObject(this._raw[fx]) ? this._raw[fx] : {}), ...this.cfg[fx]};
+            for (const old of RETIRED_KEYS)
+                delete out[fx][old];
+        }
         try {
             GLib.mkdir_with_parents(CONFIG_DIR, 0o755);
             // file_set_contents writes a temp file and renames it: the effects never
@@ -571,42 +558,6 @@ function colorRow(title, rgb, onChange) {
     };
 }
 
-// Title and value on one line, the slider full-width below: a slider as a row suffix
-// squeezes the title on narrow windows.
-function blinkRow(value, onChange) {
-    const row = new Adw.PreferencesRow({title: T.blink, activatable: false});
-    const box = new Gtk.Box({
-        orientation: Gtk.Orientation.VERTICAL, spacing: 2,
-        margin_top: 10, margin_bottom: 6, margin_start: 12, margin_end: 12,
-    });
-    const header = new Gtk.Box({spacing: 12});
-    header.append(new Gtk.Label({label: T.blink, xalign: 0, hexpand: true, wrap: true}));
-    const valueLabel = new Gtk.Label({xalign: 1, css_classes: ['dim-label', 'numeric']});
-    header.append(valueLabel);
-    box.append(header);
-
-    const scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, MAX_HZ, 0.1);
-    scale.round_digits = 1;
-    scale.draw_value = false;
-    scale.hexpand = true;
-    for (let m = 0; m <= MAX_HZ; m++)
-        scale.add_mark(m, Gtk.PositionType.BOTTOM, String(m));
-    box.append(scale);
-    row.set_child(box);
-
-    const show = v => {
-        valueLabel.label = v < 0.05 ? T.steady : `${fmtNumber(v)} ${T.perSecond}`;
-    };
-    scale.set_value(value);           // before connecting: opening the window saves nothing
-    show(value);
-    scale.connect('value-changed', () => {
-        const v = Math.round(scale.get_value() * 10) / 10;
-        show(v);
-        onChange(v);
-    });
-    return {row, set: v => scale.set_value(v)};
-}
-
 function effectGroup(store, fx) {
     const group = new Adw.PreferencesGroup({title: T[fx], description: T[`${fx}Hint`]});
     const reset = new Gtk.Button({label: T.reset, valign: Gtk.Align.CENTER, css_classes: ['flat']});
@@ -614,26 +565,14 @@ function effectGroup(store, fx) {
 
     const colors = COLOR_ROWS[fx].map(([key, label]) =>
         [key, colorRow(T[label], store.get(fx, key), c => store.set(fx, key, c))]);
-    const smooth = new Adw.SwitchRow({
-        title: T.smooth, subtitle: T.smoothHint, active: store.get(fx, 'gpu_smooth'),
-    });
-    const blink = blinkRow(store.get(fx, 'gpu_blink_hz'), v => {
-        store.set(fx, 'gpu_blink_hz', v);
-        smooth.sensitive = v > 0;
-    });
-    smooth.sensitive = store.get(fx, 'gpu_blink_hz') > 0;
-    smooth.connect('notify::active', () => store.set(fx, 'gpu_smooth', smooth.active));
-
-    for (const r of [...colors.map(([, c]) => c.row), blink.row, smooth])
-        group.add(r);
+    for (const [, c] of colors)
+        group.add(c.row);
 
     reset.connect('clicked', () => {
         const d = DEFAULTS[fx];
         store.reset(fx);
         for (const [key, c] of colors)
             c.setRgb(d[key]);
-        blink.set(d.gpu_blink_hz);
-        smooth.active = d.gpu_smooth;
     });
     return group;
 }
